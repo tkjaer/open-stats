@@ -1,6 +1,7 @@
 // Command load sends counts to nginx the way browsers do, for
 // test/load/run.sh: a steady rate from many different public IP addresses,
-// then a burst. It prints one JSON line per phase. Test use only.
+// then a burst. It prints one JSON line per phase, and exits with status 1
+// unless every request got an empty 204. Test use only.
 package main
 
 import (
@@ -90,6 +91,7 @@ func main() {
 			rec(time.Since(start), fmt.Sprintf("status %d, %d bytes", resp.StatusCode, len(body)))
 		}
 	}
+	failed := false
 	run := func(name string, send func(go1 func())) {
 		res := result{Phase: name, Other: map[string]int{}, Start: time.Now().Unix()}
 		var mu sync.Mutex
@@ -121,6 +123,9 @@ func main() {
 			res.P50ms, res.P99ms, res.MaxMs = lat[len(lat)/2], lat[len(lat)*99/100], lat[len(lat)-1]
 		}
 		json.NewEncoder(os.Stdout).Encode(res)
+		if res.Empty204 != res.Sent {
+			failed = true
+		}
 	}
 
 	run(*phase, func(go1 func()) {
@@ -138,5 +143,11 @@ func main() {
 				go1()
 			}
 		})
+	}
+	// Every request must get an empty 204, also when nginx's cap rejects it;
+	// anything else, including a request that failed, is a failure.
+	if failed {
+		fmt.Fprintln(os.Stderr, "load: not every request got an empty 204")
+		os.Exit(1)
 	}
 }

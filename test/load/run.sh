@@ -47,15 +47,30 @@ sleep 10
 echo "== idle"
 vps report "$now" "$(date +%s)"
 
-out=$("${compose[@]}" exec -T load "/repo/test/.bin/load-linux-$arch" -rate "$rate" -duration "${steady}s" -burst "$burst")
-echo "== steady $rate/s for ${steady}s, then a burst of $burst"
-report "$(head -1 <<<"$out")"
-echo "== burst"
-report "$(tail -1 <<<"$out")"
-sent=$(( $(field sent "$(head -1 <<<"$out")") + $(field sent "$(tail -1 <<<"$out")") ))
+# The load tool exits 1 if any request got something other than an empty 204;
+# report the measurements anyway, then fail at the end.
+failed=0
+load() { "${compose[@]}" exec -T load "/repo/test/.bin/load-linux-$arch" "$@"; }
+phase() { grep "\"phase\":\"$1\"" <<<"$2" || true; }
+
+out=$(load -rate "$rate" -duration "${steady}s" -burst "$burst") || failed=1
+steady_out=$(phase steady "$out") burst_out=$(phase burst "$out")
+if [[ -z $steady_out ]]; then echo "no output from the load tool" >&2; exit 1; fi
+if (( burst > 0 )); then
+    echo "== steady $rate/s for ${steady}s, then a burst of $burst"
+else
+    echo "== steady $rate/s for ${steady}s"
+fi
+report "$steady_out"
+sent=$(field sent "$steady_out")
+if [[ -n $burst_out ]]; then
+    echo "== burst"
+    report "$burst_out"
+    sent=$(( sent + $(field sent "$burst_out") ))
+fi
 
 sleep 12
-over_out=$("${compose[@]}" exec -T load "/repo/test/.bin/load-linux-$arch" -rate "$over" -duration 30s -burst 0 -phase "over-the-cap")
+over_out=$(load -rate "$over" -duration 30s -burst 0 -phase "over-the-cap") || failed=1
 echo "== $over/s for 30 s (over nginx's cap)"
 report "$over_out"
 sent=$(( sent + $(field sent "$over_out") ))
@@ -72,5 +87,9 @@ if [[ -n $other ]]; then
 fi
 if (( counted != sent - rejected )); then
     echo "  MISMATCH" >&2
+    exit 1
+fi
+if (( failed )); then
+    echo "  not every request got an empty 204" >&2
     exit 1
 fi
