@@ -50,7 +50,9 @@ collector/build.sh      # dist/open-stats-linux-{amd64,arm64} and dist/SHA256SUM
 ```
 
 The build is reproducible: the same commit and Go version give the same
-checksums, so the binary on the server can be compared with a rebuild. Copy
+checksums, so the binary on the server can be compared with a rebuild.
+`open-stats version` prints the full commit ID it was built from, with
+`-dirty` if the checkout had uncommitted or untracked files. Copy
 `dist/` and the repository to the server, for example:
 
 ```sh

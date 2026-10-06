@@ -9,7 +9,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-version=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)
+# The version is the full commit ID, not `git describe`, so it doesn't depend on
+# local tags or a shallow clone. "-dirty" marks uncommitted or untracked files.
+if version=$(git rev-parse --verify HEAD 2>/dev/null); then
+    if [ -n "$(git status --porcelain)" ]; then version+=-dirty; fi
+else
+    version=unknown
+fi
 rm -rf dist
 mkdir -p dist
 for arch in amd64 arm64; do
