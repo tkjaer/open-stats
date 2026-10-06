@@ -167,6 +167,9 @@ func TestParseWeekRejects(t *testing.T) {
 	tests := map[string]string{
 		"not json":             "{",
 		"trailing data":        good + "{}",
+		"trailing brace":       good + "}",
+		"trailing bracket":     good + "]garbage",
+		"trailing text":        good + "x",
 		"not an object":        "[1,2,3]",
 		"string count":         edit(func(m map[string]any) { row(m, "page_loads", 0)["count"] = "104" }),
 		"negative":             edit(func(m map[string]any) { row(m, "page_loads", 2)["count"] = -1 }),
@@ -249,6 +252,14 @@ func TestParseSettings(t *testing.T) {
 	}
 	if _, err := ParseSettings([]byte(strings.Replace(string(Marshal(s)), `"public"`, `"x": 1, "public"`, 1)), "how-the-internet-works"); err == nil {
 		t.Error("extra key: accepted")
+	}
+	for _, suffix := range []string{"}", "]garbage", "{}", "x"} {
+		if _, err := ParseSettings(append(Marshal(s), suffix...), "how-the-internet-works"); err == nil {
+			t.Errorf("trailing %q: accepted", suffix)
+		}
+	}
+	if _, err := ParseSettings(append(Marshal(s), " \n\t"...), "how-the-internet-works"); err != nil {
+		t.Errorf("trailing whitespace: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"reflect"
 	"regexp"
@@ -249,8 +250,8 @@ func strictDecode(data []byte, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	if dec.More() {
-		return fmt.Errorf("trailing data")
+	if err := dec.Decode(&json.RawMessage{}); err != io.EOF {
+		return fmt.Errorf("trailing data after the JSON value")
 	}
 	var orig, back any
 	if err := useNumber(data, &orig); err != nil {
