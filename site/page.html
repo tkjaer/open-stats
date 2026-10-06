@@ -49,6 +49,17 @@ in grey.</p>
 <li><svg viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" fill="{{.Colour}}"/></svg> {{.Key}}</li>
 {{- end}}
 </ul>
+<details><summary>Daily numbers</summary>
+<div class="scroll"><table>
+<caption>{{.Name}}: page loads and language per day, {{.Range}} (UTC)</caption>
+<thead><tr><th scope="col">Day</th><th scope="col">Page loads</th>{{range .LangKeys}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range .Daily}}
+<tr><th scope="row"><time datetime="{{.Date}}">{{.Label}}</time></th>{{if .None}}<td colspan="{{.Span}}" class="quiet">no data published</td>{{else}}<td>{{.PageLoads}}</td>{{if .Quiet}}<td colspan="{{.Span}}" class="quiet">not broken down</td>{{else}}{{range .Language}}<td>{{.}}</td>{{end}}{{end}}{{end}}</tr>
+{{- end}}
+</tbody>
+</table></div>
+</details>
 <h3>Weeks</h3>
 <p class="meta">Sums of the published daily numbers above.</p>
 <table>
@@ -90,8 +101,9 @@ This page has no JavaScript, no cookies and no tracking. Built {{.Built}} UTC.</
 </body>
 </html>
 {{define "chart" -}}
-<svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-labelledby="{{.ID}}" xmlns="http://www.w3.org/2000/svg" font-size="11" font-family="system-ui, sans-serif">
+<svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-labelledby="{{.ID}}" aria-describedby="{{.ID}}-desc" xmlns="http://www.w3.org/2000/svg" font-size="11" font-family="system-ui, sans-serif">
 <title id="{{.ID}}">{{.Title}}</title>
+<desc id="{{.ID}}-desc">{{.Desc}}</desc>
 {{- range .Grid}}
 <line x1="{{.X1}}" x2="{{.X2}}" y1="{{.Y}}" y2="{{.Y}}" stroke="#ccc" stroke-width="0.5"/>
 <text x="{{.TextX}}" y="{{.TextY}}" text-anchor="end" fill="currentColor">{{.Label}}</text>

@@ -138,6 +138,7 @@ type (
 		LangKeys            []string
 		Quiet               bool // the language chart has days that are not broken down
 		QuietCol            bool // the weeks table has page loads that are not broken down
+		Daily               []dailyRow
 		Countries           []countryWeek
 	}
 	settingsView struct {
@@ -149,6 +150,14 @@ type (
 		PageLoads int
 		Language  []int
 		Quiet     int // page loads on days that are not broken down
+	}
+	dailyRow struct {
+		Date, Label string
+		None        bool // no data published for this day
+		Quiet       bool // only PageLoads is published
+		PageLoads   int
+		Language    []int // per LangKeys
+		Span        int   // language columns, for None and Quiet
 	}
 	legendItem  struct{ Key, Colour string }
 	countryWeek struct {
@@ -167,11 +176,11 @@ type (
 		Span  int // columns to span when Quiet
 	}
 	chart struct {
-		ID, Title string
-		W, H      int
-		Grid      []gridLine
-		Bars      []bar
-		Labels    []label
+		ID, Title, Desc string
+		W, H            int
+		Grid            []gridLine
+		Bars            []bar
+		Labels          []label
 	}
 	gridLine struct {
 		X1, X2       int
@@ -206,7 +215,7 @@ type series struct {
 }
 
 // barChart draws stacked bars, one per day.
-func barChart(id, title string, days []time.Time, ss []series) chart {
+func barChart(id, title, desc string, days []time.Time, ss []series) chart {
 	const w, h, left, bottom, top = 720, 220, 44, 28, 10
 	plotW, plotH := float64(w-left-8), float64(h-bottom-top)
 	most := 0
@@ -219,7 +228,7 @@ func barChart(id, title string, days []time.Time, ss []series) chart {
 	}
 	ymax := niceMax(most)
 	bw := plotW / float64(max(len(days), 1))
-	c := chart{ID: id, Title: title, W: w, H: h}
+	c := chart{ID: id, Title: title, Desc: desc, W: w, H: h}
 	for i := range 5 {
 		y := float64(top) + plotH - plotH*float64(i)/4
 		c.Grid = append(c.Grid, gridLine{X1: left, X2: w - 8, Y: f1(y), TextX: strconv.Itoa(left - 4),
@@ -305,7 +314,8 @@ func view(p Project) projectView {
 		days = append(days, d)
 	}
 	v.Range = fmt.Sprintf("%s – %s %d", fmtDay(first), fmtDay(last), last.Year())
-	v.PageLoads = barChart(p.Slug+"-page-loads", p.Name+": page loads per day", days,
+	v.PageLoads = barChart(p.Slug+"-page-loads", p.Name+": page loads per day",
+		"Bar chart. The same numbers are in the table “Daily numbers” after the language chart.", days,
 		[]series{{"page loads", palette[0], pageLoads}})
 
 	keys := slices.Clone(p.Request.Allowed)
@@ -337,8 +347,30 @@ func view(p Project) projectView {
 		ss = append(ss, series{quietKey, quietColour, quiet})
 		v.Legend = append(v.Legend, legendItem{quietKey, quietColour})
 	}
-	v.Language = barChart(p.Slug+"-language", p.Name+": language per day", days, ss)
+	v.Language = barChart(p.Slug+"-language", p.Name+": language per day",
+		"Stacked bar chart. The same numbers are in the table “Daily numbers” below.", days, ss)
 	v.LangKeys = keys
+
+	// The charts' numbers as a table, for screen readers and anyone who
+	// can't tell the colours apart.
+	for _, d := range days {
+		day := d.Format(time.DateOnly)
+		r := dailyRow{Date: day, Label: d.Format("Mon 2 Jan 2006"), Span: len(keys)}
+		n, ok := pageLoads[day]
+		lang, broken := language[day]
+		switch {
+		case !ok:
+			r.None, r.Span = true, len(keys)+1
+		case !broken:
+			r.Quiet, r.PageLoads = true, n
+		default:
+			r.PageLoads = n
+			for _, k := range keys {
+				r.Language = append(r.Language, lang[k])
+			}
+		}
+		v.Daily = append(v.Daily, r)
+	}
 
 	for i := len(p.Weeks) - 1; i >= 0; i-- {
 		w := p.Weeks[i]

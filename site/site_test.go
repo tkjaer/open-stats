@@ -328,7 +328,7 @@ func TestNiceMax(t *testing.T) {
 func TestGridLabelsMatchLines(t *testing.T) {
 	days, _ := isoweek.Days("2026-W40")
 	for _, most := range []int{1, 5, 7, 10, 13, 30, 99, 450} {
-		c := barChart("t", "t", days, []series{{"x", "#000", map[string]int{days[0].Format(time.DateOnly): most}}})
+		c := barChart("t", "t", "", days, []series{{"x", "#000", map[string]int{days[0].Format(time.DateOnly): most}}})
 		top, bottom := c.Grid[4], c.Grid[0]
 		ymax, _ := strconv.Atoi(top.Label)
 		y0, _ := strconv.ParseFloat(bottom.Y, 64)
@@ -414,6 +414,105 @@ func TestRejectsLowerThresholds(t *testing.T) {
 		f.put("2026-W40.json", weekJSONFor(t, &p, "2026-W40"))
 		if _, err := f.build(); err == nil {
 			t.Errorf("min_count %d, min_day_total %d: accepted", c.min, c.quiet)
+		}
+	}
+}
+
+// The daily table holds exactly the numbers the two charts plot, with text
+// column headers, quiet days as a total only, and days without data marked;
+// each chart's description points to it.
+func TestDailyTable(t *testing.T) {
+	f := newFixture(t)
+	f.put("2026-W40.json", weekJSON(t, "2026-W40"))
+	f.put("2026-W38.json", weekJSON(t, "2026-W38")) // so 2026-W39 has no data
+	page, err := f.build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(page, "<details><summary>Daily numbers</summary>")
+	if start < 0 {
+		t.Fatal("no daily table")
+	}
+	daily := page[start : start+strings.Index(page[start:], "</details>")]
+	for _, want := range []string{
+		"<caption>How the Internet Works: page loads and language per day, 14 Sep – 4 Oct 2026 (UTC)</caption>",
+		`<th scope="col">Day</th><th scope="col">Page loads</th><th scope="col">en</th><th scope="col">da</th></tr>`,
+		`<th scope="row"><time datetime="2026-10-04">Sun 4 Oct 2026</time></th><td>4</td><td colspan="2" class="quiet">not broken down</td></tr>`,
+		`<th scope="row"><time datetime="2026-09-28">Mon 28 Sep 2026</time></th><td>104</td><td>70</td><td>34</td></tr>`,
+		`<th scope="row"><time datetime="2026-09-24">Thu 24 Sep 2026</time></th><td colspan="3" class="quiet">no data published</td></tr>`,
+	} {
+		if !strings.Contains(daily, want) {
+			t.Errorf("daily table lacks %q", want)
+		}
+	}
+	for _, id := range []string{"how-the-internet-works-page-loads", "how-the-internet-works-language"} {
+		if !strings.Contains(page, `aria-labelledby="`+id+`" aria-describedby="`+id+`-desc"`) ||
+			!regexp.MustCompile(`<desc id="`+id+`-desc">[^<]*“Daily numbers”[^<]*</desc>`).MatchString(page) {
+			t.Errorf("chart %s isn't described as pointing to the daily table", id)
+		}
+	}
+
+	// Parse the table: day -> column -> cell.
+	var cols []string
+	for _, m := range regexp.MustCompile(`<th scope="col">([^<]*)</th>`).FindAllStringSubmatch(daily, -1) {
+		cols = append(cols, html.UnescapeString(m[1]))
+	}
+	table := map[string]map[string]string{}
+	cell := regexp.MustCompile(`<td(?: colspan="\d+" class="quiet")?>([^<]*)</td>`)
+	for _, m := range regexp.MustCompile(`<tr><th scope="row"><time datetime="([\d-]+)">[^<]*</time></th>(.*)</tr>`).FindAllStringSubmatch(daily, -1) {
+		row := map[string]string{}
+		for i, c := range cell.FindAllStringSubmatch(m[2], -1) {
+			row[cols[i+1]] = c[1]
+		}
+		table[m[1]] = row
+	}
+	if len(table) != 21 {
+		t.Errorf("daily table has %d days, want 21", len(table))
+	}
+
+	// Every bar is in the table, under its column...
+	plotted := map[string]map[string]int{}
+	bars := regexp.MustCompile(`<title>([\d-]+) ([^:<]+): (\d+)</title>`)
+	for _, c := range []struct{ id, prefix string }{
+		{"how-the-internet-works-page-loads", ""}, {"how-the-internet-works-language", "lang "}} {
+		svg := page[strings.Index(page, `<title id="`+c.id+`">`):]
+		svg = svg[:strings.Index(svg, "</svg>")]
+		for _, m := range bars.FindAllStringSubmatch(svg, -1) {
+			day, key, n := m[1], html.UnescapeString(m[2]), m[3]
+			if plotted[day] == nil {
+				plotted[day] = map[string]int{}
+			}
+			v, _ := strconv.Atoi(n)
+			plotted[day][c.prefix+key] = v
+			col, want := key, n
+			switch {
+			case c.prefix == "":
+				col = "Page loads"
+			case key == "not broken down":
+				col, want = "en", "not broken down"
+				if table[day]["Page loads"] != n {
+					t.Errorf("%s: quiet day plotted as %s, table has %s page loads", day, n, table[day]["Page loads"])
+				}
+			}
+			if got := table[day][col]; got != want {
+				t.Errorf("%s %s: chart %s, table %q", day, key, n, got)
+			}
+		}
+	}
+	// ... and every number in the table is plotted (zeros as no bar).
+	for day, row := range table {
+		for col, s := range row {
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				continue
+			}
+			key := "lang " + col
+			if col == "Page loads" {
+				key = "page loads"
+			}
+			if plotted[day][key] != n {
+				t.Errorf("%s %s: table %d, chart %d", day, col, n, plotted[day][key])
+			}
 		}
 	}
 }

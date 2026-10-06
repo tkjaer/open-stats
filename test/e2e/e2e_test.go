@@ -807,6 +807,10 @@ func testSite(t *testing.T) {
 	check(t, strings.Contains(page, ">19 page loads: not broken down<") && strings.Contains(page, ">5 page loads: not broken down<"),
 		"days under 20 page loads are not broken down")
 	check(t, !regexp.MustCompile(`>(SE|NO|US)<`).MatchString(page), "countries under 5 on a day are not named")
+	check(t, strings.Contains(page, "<summary>Daily numbers</summary>") &&
+		regexp.MustCompile(`<td>21</td><td>\d+</td>`).MatchString(page) &&
+		regexp.MustCompile(`<td>19</td><td colspan="\d+" class="quiet">not broken down</td>`).MatchString(page),
+		"the charts' numbers are in the daily table, quiet days as a total only")
 }
 
 // otherSiteIP is the client IP of requests meant for the stand-in for the
