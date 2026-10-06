@@ -173,12 +173,13 @@ func FoldCountries(dayTotal int, byCountry map[string]int, min int) (map[string]
 	return out, nil
 }
 
-// LanguageCounts counts the allowed values (GoatCounter paths "/<value>");
-// anything else is "other".
-func LanguageCounts(dayTotal int, byPath map[string]int, allowed []string) (map[string]int, error) {
+// LanguageCounts counts the project's languages (GoatCounter paths "/<code>")
+// and puts the rest of the day's total under "other": every other code, by
+// subtraction, so their own counts are never needed or published.
+func LanguageCounts(dayTotal int, byPath map[string]int, languages []string) (map[string]int, error) {
 	out := map[string]int{}
 	sum := 0
-	for _, v := range allowed {
+	for _, v := range languages {
 		out[v] = byPath["/"+v]
 		sum += out[v]
 	}
@@ -221,7 +222,7 @@ func Build(p *project.Project, week string, raw Raw, generatedAt time.Time, src 
 	for _, d := range days {
 		day := d.Format(time.DateOnly)
 		total := raw.Totals[day]
-		lang, err := LanguageCounts(total, raw.Paths[day], p.Request.Allowed)
+		lang, err := LanguageCounts(total, raw.Paths[day], p.Publish.Languages)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", day, err)
 		}
@@ -279,13 +280,13 @@ func checkCount(n int, where string) error {
 	return nil
 }
 
-func checkCounts(counts map[string]int, where string, key *regexp.Regexp) (int, error) {
+func checkCounts(counts map[string]int, where string, key func(string) bool) (int, error) {
 	if _, ok := counts[Other]; !ok {
 		return 0, fmt.Errorf(`%s: counts must include "other"`, where)
 	}
 	sum := 0
 	for k, n := range counts {
-		if k != Other && !key.MatchString(k) {
+		if k != Other && !key(k) {
 			return 0, fmt.Errorf("%s: bad key %q", where, k)
 		}
 		if err := checkCount(n, where+"."+k); err != nil {
@@ -299,8 +300,11 @@ func checkCounts(counts map[string]int, where string, key *regexp.Regexp) (int, 
 // ParseWeek reads and checks data/<slug>/weekly/<id>.json for project p. The
 // file's thresholds may be stricter than p's, never looser: they are checked
 // against p (trusted, built in), not only against the file's own declarations.
+// Likewise its language keys must be p's languages (or "other"), so no other
+// code's own count can reach the page.
 func ParseWeek(data []byte, p *project.Project, id string) (*Week, error) {
 	slug := p.Slug
+	isLanguage := func(k string) bool { return slices.Contains(p.Publish.Languages, k) }
 	var w Week
 	if err := strictDecode(data, &w); err != nil {
 		return nil, err
@@ -368,11 +372,11 @@ func ParseWeek(data []byte, p *project.Project, id string) (*Week, error) {
 		if lang.Day != day || ctry.Day != day {
 			return nil, fmt.Errorf("language and country rows must be exactly the days with at least min_day_total page loads, in order (%s)", day)
 		}
-		ls, err := checkCounts(lang.Counts, day+" language", project.ValueRE)
+		ls, err := checkCounts(lang.Counts, day+" language", isLanguage)
 		if err != nil {
 			return nil, err
 		}
-		cs, err := checkCounts(ctry.Counts, day+" country", CountryRE)
+		cs, err := checkCounts(ctry.Counts, day+" country", CountryRE.MatchString)
 		if err != nil {
 			return nil, err
 		}

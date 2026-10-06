@@ -49,22 +49,23 @@ func TestFoldCountries(t *testing.T) {
 }
 
 func TestLanguageCounts(t *testing.T) {
-	allowed := []string{"en", "da"}
+	languages := []string{"en", "da", "de"}
 	tests := []struct {
 		total int
 		in    map[string]int
 		want  map[string]int
 	}{
-		{10, map[string]int{"/en": 6, "/da": 3, "/xx": 1}, map[string]int{"en": 6, "da": 3, "other": 1}},
-		{0, nil, map[string]int{"en": 0, "da": 0, "other": 0}},
+		{10, map[string]int{"/en": 6, "/da": 3}, map[string]int{"en": 6, "da": 3, "de": 0, "other": 1}},
+		{12, map[string]int{"/en": 6, "/de": 2}, map[string]int{"en": 6, "da": 0, "de": 2, "other": 4}},
+		{0, nil, map[string]int{"en": 0, "da": 0, "de": 0, "other": 0}},
 	}
 	for _, tt := range tests {
-		got, err := LanguageCounts(tt.total, tt.in, allowed)
+		got, err := LanguageCounts(tt.total, tt.in, languages)
 		if err != nil || !maps.Equal(got, tt.want) {
 			t.Errorf("%v: got %v, %v; want %v", tt.in, got, err, tt.want)
 		}
 	}
-	if _, err := LanguageCounts(1, map[string]int{"/en": 2}, allowed); err == nil {
+	if _, err := LanguageCounts(1, map[string]int{"/en": 2}, languages); err == nil {
 		t.Error("languages above the total: no error")
 	}
 }
@@ -123,7 +124,7 @@ func TestBuild(t *testing.T) {
 	if c := w.Tables.Country.Rows[3].Counts; !maps.Equal(c, map[string]int{"DK": 15, "SE": 6, "other": 0}) {
 		t.Errorf("countries %v", c)
 	}
-	if c := w.Tables.Language.Rows[0].Counts; !maps.Equal(c, map[string]int{"en": 70, "da": 34, "other": 0}) {
+	if c := w.Tables.Language.Rows[0].Counts; !maps.Equal(c, map[string]int{"en": 70, "da": 34, "de": 0, "other": 0}) {
 		t.Errorf("language %v", c)
 	}
 	// The three tables, daily, and nothing else.
@@ -219,6 +220,12 @@ func TestParseWeekRejects(t *testing.T) {
 		"html in version":      edit(func(m map[string]any) { m["source"].(map[string]any)["goatcounter_version"] = "<script>" }),
 		"html in generated_at": edit(func(m map[string]any) { m["generated_at"] = "<script>" }),
 		"min_count 0":          edit(func(m map[string]any) { tables(m, "country")["min_count"] = 0 }),
+		"unlisted language":    edit(func(m map[string]any) { counts(m, "language", 0)["fr"] = 0 }),
+		"unlisted language count": edit(func(m map[string]any) {
+			counts(m, "language", 0)["fr"] = counts(m, "language", 0)["da"]
+			delete(counts(m, "language", 0), "da")
+		}),
+		"two-letter uppercase": edit(func(m map[string]any) { counts(m, "language", 0)["EN"] = 0 }),
 	}
 	for name, data := range tests {
 		if _, err := ParseWeek([]byte(data), hiw(t), "2026-W40"); err == nil {
@@ -227,6 +234,15 @@ func TestParseWeekRejects(t *testing.T) {
 	}
 	if _, err := ParseWeek([]byte(good), hiw(t), "2026-W41"); err == nil {
 		t.Error("file name / period mismatch: accepted")
+	}
+	// A week published before a language got its own column lacks that key.
+	older := edit(func(m map[string]any) {
+		for i := range tables(m, "language")["rows"].([]any) {
+			delete(counts(m, "language", i), "de")
+		}
+	})
+	if _, err := ParseWeek([]byte(older), hiw(t), "2026-W40"); err != nil {
+		t.Errorf("week without the de column: %v", err)
 	}
 }
 
@@ -301,7 +317,7 @@ func TestQuietDays(t *testing.T) {
 		c := w.Tables.Country.Rows[i]
 		got = append(got, r.Day)
 		if c.Day != r.Day || !maps.Equal(c.Counts, map[string]int{"DK": want[r.Day], "other": 0}) ||
-			!maps.Equal(r.Counts, map[string]int{"da": 1, "en": want[r.Day] - 1, "other": 0}) {
+			!maps.Equal(r.Counts, map[string]int{"da": 1, "de": 0, "en": want[r.Day] - 1, "other": 0}) {
 			t.Errorf("%s: language %v, country %v", r.Day, r.Counts, c.Counts)
 		}
 	}

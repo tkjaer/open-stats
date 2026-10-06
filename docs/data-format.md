@@ -81,10 +81,14 @@ An example, shortened to two of the seven days:
 - **`page_loads`**: page loads per day. One row for each of the seven days,
   in order, including days with 0.
 - **`language`**: page loads per day by the language the app was opened in.
-  The keys are the project's allowed values (`request.allowed` in
-  `projects/<slug>.yml`) plus `other`. `other` would be anything else that got
-  through, which nginx shouldn't allow, so it should always be 0. Each row
-  adds up to that day's page loads.
+  The app sends the language as a two-letter lowercase code. The keys are
+  the project's languages (`publish.languages` in `projects/<slug>.yml`) plus
+  `other`, which holds every other code together: it is the day's page loads
+  minus the listed languages, so a code without its own column is never
+  named, and its own count is never even read from GoatCounter. Each row adds
+  up to that day's page loads. A week published before a language was added
+  to the list has no key for it (its page loads are in `other`); readers
+  should treat a missing key as "not broken out", not as 0.
 - **`country`**: page loads per day by country (ISO 3166-1 alpha-2 codes, as
   looked up by GoatCounter's built-in GeoIP database). A country is only named
   on a day when it has at least `min_count` page loads that day. Everything
