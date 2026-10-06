@@ -134,6 +134,28 @@ curl -si 'https://stats.irq.dk/how-the-internet-works/count?lang=en'    # HTTP/2
 All `map`s and zones in the file start with `openstats`, so they don't clash
 with the other sites.
 
+### Listen addresses and the other sites
+
+Check how the server's other sites listen on port 443 before you reload:
+
+```sh
+nginx -T 2>/dev/null | grep -E '^\s*listen' | grep 443
+nginx -T 2>/dev/null | grep -E '^\s*server_name' | grep -F 'stats.irq.dk'    # this file's line only
+```
+
+- If the other sites listen on specific addresses (e.g.
+  `listen 192.0.2.1:443 ssl;` and `listen [2001:db8::1]:443 ssl;`), use the
+  same addresses in this file's two `listen` lines. nginx matches a
+  connection to such an address only against the servers that listen on that
+  exact address and port, so a server with `listen 443 ssl;` is never chosen
+  for it, and requests to `stats.irq.dk` get one of the other sites' answers
+  (e.g. a 404) instead.
+- No other `server` block may name `stats.irq.dk` (e.g. one left over from
+  issuing the certificate); remove it there.
+- Keep one of the other sites as the default server for each of those
+  addresses (`default_server`, or the first one nginx loads), and never make
+  this one the default. The [logging](#logging) section relies on that.
+
 ### Rate limit
 
 nginx forwards at most **10 counts a second for all projects together** (about
@@ -233,8 +255,9 @@ closed connections and upstream errors. Keep both when editing the file.
 
 nginx picks the `server` from the TLS name (SNI) and then from the `Host`
 header. Two things happen before it knows a connection is for `stats.irq.dk`,
-so they are handled and logged by the **default server for port 443** (one of
-the other sites), with its log settings:
+so they are handled and logged by the **default server for that address and
+port 443** (one of the other sites; see
+[above](#listen-addresses-and-the-other-sites)), with its log settings:
 
 - a TLS handshake that fails before the client names `stats.irq.dk`; nginx
   logs most of these at level `info`, which the usual error log level
