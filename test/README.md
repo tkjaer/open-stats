@@ -1,94 +1,55 @@
-# Tests
+# Development and tests
+
+One Go module; its only dependency is
+[`go.yaml.in/yaml/v3`](https://github.com/yaml/go-yaml).
+[`cmd/open-stats`](../cmd/open-stats/) is the binary (`export`, `configure`,
+`site`, `version`), [`collector/`](../collector/) the server side,
+[`internal/`](../internal/) the shared rules, [`projects/`](../projects/) one
+file per site, [`site/`](../site/) the page.
 
 ```sh
-test/run.sh          # everything; about four minutes
-KEEP=1 test/run.sh   # same, but leave the container running to poke at
+go test ./...        # unit tests only
+test/run.sh          # everything; about seven minutes
+KEEP=1 test/run.sh   # same, but leave the container running
+test/load/run.sh     # load measurement on one core; not part of run.sh
 ```
 
-Needs Go (the version in [`../go.mod`](../go.mod)) and Docker with
-`docker compose` (OrbStack and Docker Desktop both work).
+`run.sh` needs Go and Docker with `docker compose`. In CI,
+[`test.yml`](../.github/workflows/test.yml) runs it with `shellcheck` and a
+reproducible-build check; [`pages.yml`](../.github/workflows/pages.yml)
+builds the page daily from `main` and open-stats-data (actions pinned by
+commit, read-only permissions except for Pages).
 
-## What it does
+What `run.sh` checks:
 
-1. **Unit tests** on this machine: `gofmt`, `go vet` and `go test -race ./...`.
-   These cover the publishing rules (quiet days under 20, the threshold of 5, `other`), strict
-   validation of data files, ISO weeks, the export (against a fake
-   GoatCounter and a local git repository), the page (escaping, no scripts,
-   the CSP, a daily table with exactly the numbers the charts plot) and that
-   nginx's allow-list matches `projects/*.yml`.
-2. Cross-compiles `open-stats` for Linux, and builds the end-to-end tests
-   with the race detector in a pinned Go container (it needs cgo).
-3. Starts one container ([`docker-compose.yml`](docker-compose.yml),
-   [`vps/Dockerfile`](vps/Dockerfile)) standing in for the server: Debian 12,
-   its nginx with [`../collector/nginx/stats.irq.dk.conf`](../collector/nginx/stats.irq.dk.conf)
-   unchanged (with a self-signed certificate at the placeholder paths), and
-   GoatCounter installed with
-   [`../collector/install-goatcounter.sh`](../collector/install-goatcounter.sh),
-   so the pinned sha256 sums are checked too.
-4. Runs the **end-to-end checks** ([`e2e/`](e2e/)) inside it, as root, over
-   TLS on `127.0.0.1` and `::1`:
+- **Unit tests** (`go test -race`, `gofmt`, `go vet`): the publishing rules,
+  strict validation of data files, the export against a fake GoatCounter, the
+  page (escaping, no scripts, the CSP, daily tables matching the charts) and
+  that nginx's allow-list matches `projects/`.
+- **End-to-end** ([`e2e/`](e2e/)), in a Debian 12 container with the real
+  nginx file and the pinned GoatCounter:
+  - nginx forwards only allowed two-letter `lang` values, with the client IP
+    and a fixed User-Agent and nothing else; drops other values, projects,
+    paths, GPC, DNT, bots and prefetches; always answers an empty 204, also
+    with GoatCounter slow or down; caps at 10 a second with no per-IP limit;
+  - GoatCounter counts under the right path and country, stores no pageviews
+    or browser details, fills the copy tables with empty fields, counts more
+    than 4 a second from one address, logs a failed count without its IP,
+    and keeps no bot records;
+  - `configure` and the export (a seeded week exactly as worked out by hand,
+    settings drift, a hung remote, local junk never pushed);
+  - nothing about `stats.irq.dk`'s requests reaches nginx's logs, even at
+    level `info`.
+- **The page** in the Nu HTML Checker and in Chromium with
+  [axe-core](https://github.com/dequelabs/axe-core) ([`a11y/`](a11y/)), in
+  light and dark mode: no errors, no violations, nothing fetched.
+- **systemd** in a second container: the real units, sandboxing and memory
+  limits; the hourly restart clears GoatCounter's rate limiter, loses no
+  accepted count, leaves a stopped GoatCounter stopped and isn't delayed by a
+  hung export.
 
-| Step | Checks |
-|---|---|
-| `binary` | `open-stats` is a static binary; GoatCounter is built with the isbot version its bot detection was checked against. |
-| `forwarding` | With a recording stand-in on GoatCounter's port: counts with a two-letter lowercase `lang` (`en`, `da`, `de`, `fr`) are forwarded as `/count?p=/<lang>` with the right `Host`, the client IP in `X-Real-IP`, a fixed User-Agent and no other header. Other values (`deu`, `EN`, `en-GB`, empty), projects, paths, methods, extra parameters, encodings, `Sec-GPC: 1` and `DNT: 1` are never forwarded. Every response is an empty 204, at once, including malformed requests and a slow or missing upstream. Requests without `Host: stats.irq.dk` go to the default site and are not forwarded. |
-| `rate-limits` | 60 quick requests from one IP address are all forwarded (no per-IP limit); the global cap (10 a second, burst 200) drops the rest of 300 quick requests from different addresses, still with 204. |
-| `configure` | `open-stats configure` creates the sites (`how-the-internet-works` and a second test project), applies and verifies the settings, writes the env file with mode 600, and is safe to run again. |
-| `counting` | The real GoatCounter counts allowed requests under the right path and looks up the country from a public client IP; nothing else is counted; GoatCounter stores no individual pageviews and no browser details; `hit_stats`, `ref_counts`, `size_stats` and `language_stats` hold the same counts as `hit_counts` with the referrer, width and language always empty, and `browser_stats`, `system_stats` and `campaign_stats` stay empty; with GoatCounter stopped, still an empty 204. |
-| `goatcounter-internals` | 12 counts from one IP address within a second are all counted with the unit's `-ratelimit` flag (and, as a control, fewer without it). Talking to GoatCounter directly: a count that fails while being processed is logged as JSON without the client IP (and, as a control, the IP is in the log without `-json`); requests from cloud and hosting ranges sent through nginx are counted, not recorded as bots (and, as a control, the `bots` table does catch a request sent around nginx with a User-Agent that isbot checks IPs for). |
-| `export` | A seeded week is exported to a local bare git repository exactly as worked out by hand (including days of 5 and 19 page loads published as totals only, days of 20 and 21 broken down, countries under 5 folded into `other`, `de` in its own column, and codes without one (`fr`, `it`) only in `other`); weeks out of range and a wrong token are refused; through the systemd unit's command, it publishes nothing and exits 3 while GoatCounter's settings differ from `projects/*.yml` (until `open-stats configure` puts them back), then commits and pushes, a second run changes nothing, a manual edit on GitHub is never overwritten and local junk is never pushed. |
-| `site` | The page built from the export shows quiet days as totals only, also in its daily table, and is well-formed HTML with no `<script>`, no event handlers, no external URLs and the strict CSP. |
-| `logs` | nginx wrote no access log and nothing about `stats.irq.dk`'s requests in its error log (at level `info`), not even after rate-limit rejections, malformed requests, dropped connections and upstream errors, while the other site's requests are logged there with their IP. |
-| `units` | The systemd units pass `systemd-analyze verify`. |
-
-5. Checks the page that the `site` step built, in two pinned containers:
-   the [Nu HTML Checker](https://validator.github.io/validator/) (vnu) finds
-   no errors or warnings, and [`a11y/check.mjs`](a11y/check.mjs) opens it in
-   Chromium (Playwright) in light and dark mode, with every `<details>` open:
-   [axe-core](https://github.com/dequelabs/axe-core) finds no accessibility
-   violations, the page's own CSP lets its style apply, and nothing is
-   blocked, logged or fetched. (vnu can't check CSP hashes, so its warning
-   about the inline style is filtered out; Chromium checks that instead.)
-6. Starts a second container from the same image with **systemd** as PID 1
-   (the `systemd` profile in [`docker-compose.yml`](docker-compose.yml),
-   privileged), installs the units from
-   [`../collector/systemd`](../collector/systemd) as the setup guide does, and
-   runs `TestSystemd` ([`e2e/systemd_test.go`](e2e/systemd_test.go)) in it:
-
-| Step | Checks |
-|---|---|
-| `unit` | GoatCounter runs under its real unit, sandboxing included, as its own user, with `GOMEMLIMIT=100MiB`, `MemoryHigh` and `MemoryMax`. |
-| `restart-only-if-running` | `goatcounter-restart.service` restarts a running GoatCounter and leaves a stopped one stopped. |
-| `restart-clears-rate-limiter` | With a test-only limit of 2 counts an hour per IP address, a third count is refused; after the timer (set to every 20 seconds for the test) restarts GoatCounter, the same address is counted again, so its key is gone. |
-| `counts-across-restarts` | 20 counts a second for about a minute while the timer restarts GoatCounter at least twice: every count GoatCounter accepted is stored, and at most a second's worth per restart is refused (it measures how long; about 0.4 s). |
-| `export-cannot-delay-restart` | The export runs against a remote that never answers (a fake ssh that hangs, like a stalled connection to GitHub), with a 5-second git deadline: the restart still happens at once while it hangs, the export fails by itself within its deadline with nothing left running, its unit has `TimeoutStartSec=15min`, and the restart isn't ordered after it. |
-| `restart-schedule` | The real timer fires every hour at half past (UTC), next within the hour, with 1 s accuracy. |
-
-The first container differs from the server in these ways, all for testing:
-
-- [`vps/test-realip.conf`](vps/test-realip.conf) lets the tests pick their
-  client IP with an `X-Test-Client-IP` header (for the country lookup and to
-  send from many addresses). It is never installed on the server.
-- [`vps/other-site.conf`](vps/other-site.conf) stands in for the server's
-  other sites: it is the default server for port 443, so `stats.irq.dk` is
-  chosen by name as on the server, and it logs normally.
-- nginx's error log is at level `info`, so the `logs` check would catch even
-  rate-limit rejections.
-- It has no systemd (the second container covers the units):
-  [`vps/gcctl`](vps/gcctl) starts and stops GoatCounter with the same command
-  line and environment as the unit (for the control runs, without `-json` and
-  with its own log file, or without `-ratelimit`).
-
-## Load measurement
-
-[`load/run.sh`](load/run.sh) (not part of `run.sh`, about 4 minutes) measures
-what counting costs on a one-core server. It starts the same container with
-one CPU core, one nginx worker and GoatCounter in a cgroup with its unit's
-memory limits, and a second container that sends counts the way browsers do,
-each on a new TLS connection from a random public IP address: 10 a second for
-150 seconds, then 200 at once, then 30 a second for 30 seconds (over nginx's
-cap). It reports nginx's and GoatCounter's CPU and memory, checks that every
-answer is an empty 204, and checks that GoatCounter counted exactly what nginx
-let through. For that count only, it logs nginx's rate-limit rejections. The
-results are in the setup guide's
-[Rate limit](../collector/README.md#rate-limit) section.
+The test container differs from the server only for testing: an
+`X-Test-Client-IP` header picks the client IP
+([`vps/test-realip.conf`](vps/test-realip.conf)), a stand-in for the other
+sites is the default server ([`vps/other-site.conf`](vps/other-site.conf)),
+and [`vps/gcctl`](vps/gcctl) runs GoatCounter without systemd.
