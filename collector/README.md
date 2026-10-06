@@ -1,34 +1,18 @@
 # Server setup
 
-How `stats.irq.dk` is set up, step by step. Everything here is done by hand;
-the server never pulls anything from this repository by itself.
-
-What runs on the server:
-
-| Part | What it does | Files |
-|---|---|---|
-| nginx | Answers every request with an empty 204, forwards allowed counts to GoatCounter | [`nginx/stats.irq.dk.conf`](nginx/stats.irq.dk.conf) |
-| GoatCounter | Keeps page loads per path (language) per hour and per country and path per day, for 31 days; listens on `127.0.0.1:8081` only; restarts hourly | [`systemd/goatcounter.service`](systemd/goatcounter.service), [`systemd/goatcounter-restart.*`](systemd/), [`goatcounter.version`](goatcounter.version) |
-| `open-stats export` | Weekly: publishes last week's numbers to [open-stats-data](https://github.com/tkjaer/open-stats-data) | [`systemd/open-stats-export.*`](systemd/) |
-| `open-stats configure` | Once per project: creates the GoatCounter site, applies its settings, sets up the export token | — |
-
-`open-stats` is one static Go binary built from this repository; the projects
-(`projects/*.yml`) are built into it.
-
-The steps assume a Debian-like server with systemd, nginx and git, run as
-root. Placeholders are in `<angle brackets>`.
+How to set up `stats.irq.dk` by hand (the server never pulls from here):
+nginx, GoatCounter on `127.0.0.1:8081`, and `open-stats`, one static binary
+for the weekly `export` and the per-project `configure`. Run as root on a
+Debian-like server with systemd, nginx and git; `<placeholders>` are yours.
 
 ## 1. DNS and certificate
 
-- `stats.irq.dk` must resolve to the server: a CNAME, or A and AAAA records,
-  pointing at `<your server>`.
-- Get a certificate for `stats.irq.dk` the same way as for the other sites and
-  put (or link) it at `/etc/ssl/stats.irq.dk/fullchain.pem` and
-  `/etc/ssl/stats.irq.dk/privkey.pem`, or change those two paths in the nginx
-  file. The nginx file has **no port-80 server** for `stats.irq.dk`, so it
-  doesn't get in the way of an existing ACME setup; if certificates are issued
-  with HTTP-01 challenges, the existing port-80 handling has to cover
-  `stats.irq.dk` too.
+- `stats.irq.dk` must resolve to the server (a CNAME, or A and AAAA records,
+  pointing at `<your server>`).
+- Put its certificate at `/etc/ssl/stats.irq.dk/{fullchain,privkey}.pem`, or
+  change those paths in the nginx file. The file has no port-80 server: if
+  you use HTTP-01 challenges, the existing port-80 setup must cover
+  `stats.irq.dk`.
 
 ## 2. Users and directories
 
@@ -40,27 +24,17 @@ install -d -o open-stats -g open-stats -m 0700 /var/lib/open-stats
 install -d -o root -g root -m 0755 /etc/open-stats
 ```
 
-## 3. Get this repository and the binaries
+## 3. Binaries
 
-On a machine with Go (the version in [`../go.mod`](../go.mod) or newer) and a
-checkout of the commit to deploy:
+On a machine with Go (the version in [`../go.mod`](../go.mod) or newer):
 
 ```sh
 collector/build.sh      # dist/open-stats-linux-{amd64,arm64} and dist/SHA256SUMS
 ```
 
 The build is reproducible: the same commit and Go version give the same
-checksums, so the binary on the server can be compared with a rebuild.
-`open-stats version` prints the full commit ID it was built from, with
-`-dirty` if the checkout had uncommitted or untracked files. Copy
-`dist/` and the repository to the server, for example:
-
-```sh
-git clone https://github.com/tkjaer/open-stats.git /tmp/open-stats   # or scp a checkout
-scp -r dist <server>:/tmp/open-stats/
-```
-
-On the server:
+checksums. `open-stats version` prints the commit (with `-dirty` for
+uncommitted changes). Copy the repository and `dist/` to the server, then:
 
 ```sh
 cd /tmp/open-stats
@@ -73,13 +47,7 @@ open-stats version
 ## 4. GoatCounter
 
 ```sh
-bash collector/install-goatcounter.sh /usr/local/bin/goatcounter
-```
-
-This downloads the release pinned in [`goatcounter.version`](goatcounter.version)
-and refuses to install it unless both sha256 sums match.
-
-```sh
+bash collector/install-goatcounter.sh /usr/local/bin/goatcounter   # checks the pinned sha256 sums
 install -m 0644 collector/systemd/goatcounter.service \
     collector/systemd/goatcounter-restart.service \
     collector/systemd/goatcounter-restart.timer /etc/systemd/system/
@@ -88,14 +56,9 @@ systemctl enable --now goatcounter goatcounter-restart.timer
 curl -s http://127.0.0.1:8081/status    # {"version":"v2.7.0", ...}
 ```
 
-GoatCounter then listens on `127.0.0.1:8081` only, over plain HTTP, with
-logs going to the journal. Its unit keeps it sandboxed: its own user, nothing
-writable but `/var/lib/goatcounter`, no outbound network, low CPU and I/O
-priority, at most 150 MB of memory (with `GOMEMLIMIT=100MiB`, so Go collects
-garbage harder before the cgroup throttles it). It runs with `-json` (see
-[Logging](#logging)) and `-ratelimit=count:1000/1`, and the timer restarts
-it every hour at half past (see
-[GoatCounter's rate limiter](#goatcounters-rate-limiter)).
+The unit sandboxes GoatCounter, caps its memory and runs it with `-json`
+([Logging](#logging)) and `-ratelimit`
+([rate limiter](#goatcounters-rate-limiter)).
 
 ## 5. Create the project's site
 
@@ -103,359 +66,208 @@ it every hour at half past (see
 open-stats configure -admin-email <you@example.org> how-the-internet-works
 ```
 
-The first time, this creates the GoatCounter site `how-the-internet-works.localhost` and the
-dashboard login (GoatCounter asks for the password; or set
-`OPEN_STATS_ADMIN_PASSWORD`). It then applies the settings from
-[`../projects/how-the-internet-works.yml`](../projects/how-the-internet-works.yml) through GoatCounter's API, reads
-them back to check them, and writes an API token for the export to
-`/etc/open-stats/env` (mode 600). The token can only read statistics and site
-settings. Running it again is safe and fixes any settings that have drifted.
+This creates the site `how-the-internet-works.localhost` and the dashboard
+login (it asks for a password, or reads `OPEN_STATS_ADMIN_PASSWORD`), applies
+and checks the settings from [`../projects/`](../projects/), and writes a
+read-only API token for the export to `/etc/open-stats/env` (mode 600). It is
+safe to run again and fixes drifted settings. It sets **collect: country
+only**, **retention: 31 days**, and a private dashboard. Keep the dashboard
+user's time zone at **UTC**; the export refuses to run otherwise.
 
-The settings it applies:
+### What GoatCounter stores
 
-| GoatCounter setting | Value | Why |
+Each count (bots are skipped) is added to these tables:
+
+| Table | One row per | Holds |
 |---|---|---|
-| Collect | country only (`16`) | No individual pageviews, sessions, referrer, User-Agent, screen size, region or browser language. |
-| Data retention | 31 days | GoatCounter's minimum; the export runs weekly, well within it. |
-| Dashboard | private, no public counter, no embedding | The numbers are published here instead. |
+| `hit_counts` | path, hour | the count |
+| `location_stats` | path, day, country | the count |
+| `hit_stats` | path, day | the count per hour |
+| `ref_counts` | path, hour, referrer | the count; the referrer is always empty |
+| `size_stats` | path, day, screen width | the count; the width is always 0 |
+| `language_stats` | path, day, browser language | the count; the language is always empty |
 
-The dashboard user's time zone must stay **UTC** (it's the default): GoatCounter
-groups days by it, and the export refuses to run otherwise.
+The last four are copies of `hit_counts`. GoatCounter fills them whatever it
+collects, after blanking the fields it doesn't collect
+([memstore.go](https://github.com/arp242/goatcounter/blob/v2.7.0/memstore.go#L268-L301),
+[cron/tasks.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cron/tasks.go#L138-L148)).
+`browser_stats`, `system_stats`, `campaign_stats`, `hits` (individual
+pageviews) and `bots` stay empty. Retention covers all of them
+([`Site.DeleteOlderThan`](https://github.com/arp242/goatcounter/blob/v2.7.0/site.go#L647-L716)).
+The e2e test checks all of this.
 
 ## 6. nginx
 
 ```sh
+nginx -T 2>/dev/null | grep -E '^\s*listen' | grep 443
+nginx -T 2>/dev/null | grep -E '^\s*server_name' | grep -F 'stats.irq.dk'   # must find nothing yet
 install -m 0644 collector/nginx/stats.irq.dk.conf /etc/nginx/sites-available/
 ln -s /etc/nginx/sites-available/stats.irq.dk.conf /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 curl -si 'https://stats.irq.dk/how-the-internet-works/count?lang=en'    # HTTP/2 204, nothing else
 ```
 
-All `map`s and zones in the file start with `openstats`, so they don't clash
-with the other sites.
-
 ### Listen addresses and the other sites
 
-Check how the server's other sites listen on port 443 before you reload:
-
-```sh
-nginx -T 2>/dev/null | grep -E '^\s*listen' | grep 443
-nginx -T 2>/dev/null | grep -E '^\s*server_name' | grep -F 'stats.irq.dk'    # this file's line only
-```
-
 - If the other sites listen on specific addresses (e.g.
-  `listen 192.0.2.1:443 ssl;` and `listen [2001:db8::1]:443 ssl;`), use the
-  same addresses in this file's two `listen` lines. nginx matches a
-  connection to such an address only against the servers that listen on that
-  exact address and port, so a server with `listen 443 ssl;` is never chosen
-  for it, and requests to `stats.irq.dk` get one of the other sites' answers
-  (e.g. a 404) instead.
+  `listen 192.0.2.1:443 ssl;`, `listen [2001:db8::1]:443 ssl;`), use the same
+  addresses in this file's two `listen` lines. Otherwise nginx never picks
+  this server for those addresses, and requests get another site's answer
+  (e.g. a 404).
 - No other `server` block may name `stats.irq.dk` (e.g. one left over from
-  issuing the certificate); remove it there.
-- Keep one of the other sites as the default server for each of those
-  addresses (`default_server`, or the first one nginx loads), and never make
-  this one the default. The [logging](#logging) section relies on that.
+  issuing the certificate).
+- Never make this server the default; [Logging](#logging) relies on another
+  site being the default for each address.
 
 ### Rate limit
 
-nginx forwards at most **10 counts a second for all projects together** (about
-860,000 a day), after a burst of up to 200 (`limit_req`, zone
-`openstats_global`). The zone is keyed by the server name, so it holds no IP
-addresses. Requests over the cap still get their 204 and aren't counted.
-There is deliberately **no limit per IP address**: a class of 30 opening the
-page together from behind one address should count as 30. So the cap protects
-the server, not the numbers: one script can still fake up to 10 counts a
-second. The cap is also what bounds GoatCounter's memory between its hourly
-restarts (see [GoatCounter's rate limiter](#goatcounters-rate-limiter)).
-
-What this costs, measured with [`test/load/run.sh`](../test/load/run.sh): the
-test container on one CPU core, one nginx worker, GoatCounter in a cgroup with
-the unit's memory limits, and every count a new TLS connection from a random
-public address.
-
-| Load | nginx CPU: average, busiest second | GoatCounter CPU: average, busiest second | GoatCounter memory (RSS) |
-|---|---|---|---|
-| idle | 0.1% | 0.1% | 59 MB |
-| 10 a second for 150 s | 2.3%, 5.0% | 1.1%, 2.4% | at most 59 MB |
-| then 200 at once | 8.2% in the busiest second | 1.8% in the busiest second | at most 50 MB |
-| 30 a second for 30 s (3 times the cap) | 5.9%, 7.4% | 1.6%, 3.1% | at most 51 MB |
-
-Every request got an empty 204 (the burst within 92 ms), nginx let 2,165 of
-2,600 through, and GoatCounter counted exactly 2,165. The percentages are of
-one core of the test machine (Apple silicon), which is probably faster than a
-VPS core; expect up to about twice as much there. Most of nginx's share is the
-TLS handshake, which every request costs whether it's over the cap or not.
+nginx forwards at most **10 counts a second for all projects together**
+(about 860,000 a day), after a burst of 200. Its key is the server name, not
+the IP address, and there is no per-IP limit, so a class behind one address
+counts in full. Measured on one core ([`test/load/run.sh`](../test/load/run.sh)),
+10 new TLS connections a second cost nginx about 2% and GoatCounter about 1%
+(at most 59 MB), and every count let through was counted.
 
 ### GoatCounter's rate limiter
 
-GoatCounter has its own limit on `/count`, by default 4 a second per client IP
-address and User-Agent
+GoatCounter limits `/count` per client IP address and User-Agent, by default
+to 4 a second
 ([handlers/backend.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/backend.go#L95-L109),
 [handlers/mw.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/mw.go#L404-L415),
 [handlers/handlers.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/handlers.go#L37-L45)).
-nginx sends one fixed User-Agent, so that would count only 4 a second from
-one address, fewer than nginx lets through. The unit raises it with
-**`-ratelimit=count:1000/1`**, far above anything nginx forwards, so it never
-applies. The tests check that 12 counts from one address within a second are
-all counted (and, as a control, that fewer are without the flag).
+nginx sends one fixed User-Agent, so the unit sets `-ratelimit=count:1000/1`
+to make sure it never applies. It can't be switched off, though, and it keys
+on the visitor's address (from `X-Real-IP`,
+[`mware.RealIP()`](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/backend.go#L52)).
+Its store ([go-limiter](https://github.com/sethvargo/go-limiter) v1.1.0
+`memorystore`) keeps, **in memory only**, the key (the address and nginx's
+User-Agent), when it was first seen, the second of its last count and the
+tokens left: nothing about the page or language, and never on disk or in a
+log. Left alone, it would keep an address for 12 to 18 hours, with no setting
+to shorten that
+([memorystore/store.go](https://github.com/sethvargo/go-limiter/blob/v1.1.0/memorystore/store.go#L85-L92)).
 
-The limiter can't be switched off, and it keys on the visitor's address:
-GoatCounter replaces the connection's address with `X-Real-IP` before the
-limiter runs
-([`mware.RealIP()`](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/backend.go#L52)).
-Its store, [go-limiter](https://github.com/sethvargo/go-limiter) v1.1.0's
-`memorystore` with its default settings, keeps one entry per address **in
-memory only**: the key (the address and nginx's User-Agent), when the address
-was first seen, the one-second window of its last count and how many counts
-that window had left. Nothing about the page or language. It is never written
-to disk or logged. Left alone, a sweep every 6 hours would remove entries
-unused for 12 hours
-([memorystore/store.go](https://github.com/sethvargo/go-limiter/blob/v1.1.0/memorystore/store.go#L85-L92)),
-so an address would stay for 12 to 18 hours after its last count, and there
-is no setting to shorten that. Each entry also costs about 400 bytes: at the
-nginx cap, 12 hours of new addresses (about 430,000) would push GoatCounter
-past its memory limit.
+So **GoatCounter restarts every hour**, which empties the store: the
+[timer](systemd/goatcounter-restart.timer) runs `systemctl try-restart
+goatcounter` at half past every hour (UTC). An address is kept **at most one
+hour, plus the moment a restart takes**. At the cap, that's about 36,000
+entries (15 MB). `try-restart` leaves a stopped GoatCounter stopped, and the
+restart doesn't wait for the export.
 
-So **GoatCounter restarts every hour**, which empties the store:
-[`goatcounter-restart.timer`](systemd/goatcounter-restart.timer) runs
-[`goatcounter-restart.service`](systemd/goatcounter-restart.service) at half
-past every hour (UTC), which runs `systemctl try-restart goatcounter`. An
-address is therefore kept **at most one hour, plus the moment a restart
-takes**, and at the cap the store holds at most about 36,000 entries (about
-15 MB). `try-restart` only restarts GoatCounter if it is running, so a stopped
-or failing GoatCounter isn't started every hour. The restart deliberately
-doesn't wait for the export, so a slow or hung export can never delay it
-(see [step 7](#7-the-weekly-export)); half past keeps it away from the export
-at 03:00 on Mondays anyway. `GOMEMLIMIT=100MiB` in the unit is a safety net
-under `MemoryHigh` in case something else grows.
-
-A restart loses (almost) nothing that was accepted. On `SIGTERM`, GoatCounter
-stops accepting connections and waits for the requests it is handling
-([zhttp serve.go](https://github.com/arp242/zhttp/blob/9a43cabb6d05/serve.go#L126-L145)),
-then stores every buffered count before it exits
-([cmd/goatcounter/serve.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cmd/goatcounter/serve.go#L361-L378),
-[memstore.go](https://github.com/arp242/goatcounter/blob/v2.7.0/memstore.go#L200-L209)).
-The one exception: if its regular store (every 10 seconds,
-[cron/cron.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cron/cron.go#L76-L105))
-is running at that very moment, the shutdown store is refused
-([pkg/bgrun/bgrun.go](https://github.com/arp242/goatcounter/blob/v2.7.0/pkg/bgrun/bgrun.go#L155-L159)),
-and counts accepted during those few milliseconds are lost. What is lost is
-the time GoatCounter isn't listening: a restart takes about 0.25 s, and counts
-sent during about 0.4 s get their 204 from nginx but aren't counted. That's
-about 4 counts at the full cap, and usually none. Measured under systemd: at
-5 counts a second over 3 restarts, and at 100 a second, every accepted count
-was stored; the tests check this across two timer restarts at 20 a second.
+On `SIGTERM`, GoatCounter finishes its requests and stores every buffered
+count
+([zhttp](https://github.com/arp242/zhttp/blob/9a43cabb6d05/serve.go#L126-L145),
+[serve.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cmd/goatcounter/serve.go#L361-L378),
+[memstore.go](https://github.com/arp242/goatcounter/blob/v2.7.0/memstore.go#L200-L209)),
+unless its regular 10-second store is running at that moment
+([bgrun.go](https://github.com/arp242/goatcounter/blob/v2.7.0/pkg/bgrun/bgrun.go#L155-L159)).
+Counts sent in the 0.4 s it isn't listening get their 204 but aren't counted:
+about 4 at the full cap, usually none.
 
 ### Logging
 
-The `stats.irq.dk` server has `access_log off` **and**
-`error_log /dev/null crit`. The second is needed because nginx's error log
-records the client's IP address on rate-limit rejections, malformed requests,
-closed connections and upstream errors. Keep both when editing the file.
+Keep both `access_log off` **and** `error_log /dev/null crit`: nginx's error
+log would otherwise record client addresses.
 
-nginx picks the `server` from the TLS name (SNI) and then from the `Host`
-header. Two things happen before it knows a connection is for `stats.irq.dk`,
-so they are handled and logged by the **default server for that address and
-port 443** (one of the other sites; see
-[above](#listen-addresses-and-the-other-sites)), with its log settings:
+Before nginx knows a connection is for `stats.irq.dk`, the **default server
+for that address and port** (another site) handles it, with its own logs: a
+TLS handshake that fails before naming `stats.irq.dk` (mostly logged at
+`info`), and a request without `Host: stats.irq.dk` (browsers always send
+it). Keep nginx's main `error_log` at `error` or higher, and check what the
+default HTTPS site logs.
 
-- a TLS handshake that fails before the client names `stats.irq.dk`; nginx
-  logs most of these at level `info`, which the usual error log level
-  (`error`) leaves out;
-- a request with no `Host` header, or another site's, even over a connection
-  made to `stats.irq.dk`. nginx treats it as a request for the default site.
-  Browsers always send `Host: stats.irq.dk`, so the app's requests never take
-  this path; hand-made requests might.
-
-To keep these out of the logs too, leave nginx's main `error_log` at its
-default level (`error`) or higher, and check what the default HTTPS site logs.
-The tests run with another site as the default server and the error log at
-`info`, and check that nothing from `stats.irq.dk`'s requests appears.
-
-GoatCounter logs to the journal (`journalctl -u goatcounter`). Its only peer
-is nginx on `127.0.0.1`; the visitor's address reaches it in the `X-Real-IP`
-header and is kept with each count until the count is processed (every 10
-seconds), and as a key in its rate limiter (see above). Its HTTP error messages name the method, URL, site and User-Agent
-(nginx's fixed one), never the address. But when processing a count fails
-(a site lookup or database error, or a panic), GoatCounter logs the whole
-count, and in its default text format that **includes the IP address**. The
-unit therefore runs it with **`-json`**: in JSON, GoatCounter leaves out the
-address, User-Agent, location and time of a count. Keep `-json` when editing
-the unit. Its request log (`-debug req`, off in the unit) skips `/count`
-anyway. The tests force such a processing error and check that GoatCounter's
-log has the error but not the address, and that none of the other client
-addresses they used appear in its log or database.
+GoatCounter logs a count that fails to store; in its default format that
+includes the IP address, so the unit runs it with **`-json`**, which doesn't.
 
 ### Bot detection
 
-GoatCounter doesn't count a request it takes for a bot. Instead it keeps a
-record of it (page, time, bot type, User-Agent) in its `bots` table for 30
-days. Its detection ([isbot](https://github.com/arp242/isbot) v1.0.0 in
-GoatCounter v2.7.0) looks at prefetch headers, the User-Agent and a `b`
-parameter from GoatCounter's own script. For a few User-Agents it also looks
-at the IP address (cloud and hosting providers). None of this applies here:
-
-- nginx drops prefetch requests and bot-like User-Agents itself, and forwards
-  no browser header and no `b` parameter;
-- the fixed User-Agent nginx sends is "no match" for isbot, and that skips
-  the IP check (isbot v1.0.0 checks IP ranges only for three specific
-  User-Agents).
-
-So a visitor on a cloud or VPN address is counted like anyone else, and the
-`bots` table stays empty. The tests check both. They also check the isbot
-version in the GoatCounter binary: after an upgrade that changes it, they fail
-until this has been checked again (`isbotChecked` in `test/e2e`).
+GoatCounter's [isbot](https://github.com/arp242/isbot) v1.0.0 records
+suspected bots in the `bots` table, checking the IP address only for three
+User-Agents. nginx drops bots and prefetches itself and sends a fixed
+User-Agent that isbot doesn't match, so `bots` stays empty and cloud or VPN
+visitors are counted. The tests fail on a new isbot version until this is
+checked again (`isbotChecked` in `test/e2e`).
 
 ## 7. The weekly export
 
-The export publishes to a separate repository,
-[tkjaer/open-stats-data](https://github.com/tkjaer/open-stats-data), never to
-this one. The page at `tkjaer.github.io/open-stats` shares an origin with the
-apps, and it is built from this repository's code. So whoever controls the
-server (its `open-stats` user or root) can publish numbers, but never code that
-runs on that origin. That only holds while these stay true:
+The export pushes to [open-stats-data](https://github.com/tkjaer/open-stats-data),
+never here. The page, which shares an origin with the apps, is built from this
+repository, so the server can publish numbers but never code, as long as:
 
-- **The deploy key is only on `open-stats-data`.** This repository has no
-  deploy key with write access.
-- **`open-stats-data` has GitHub Actions and Pages switched off**
-  (*Settings → Actions → General → Disable actions*; no Pages site). With
-  either on, a pushed workflow or HTML file could run or be served on
-  `tkjaer.github.io`. Check both after any change to the repository.
-- **This repository's `github-pages` environment only deploys from `main`**
-  (*Settings → Environments → github-pages → Deployment branches and tags →
-  Selected branches: `main`*). The workflow checks this too.
-- **The page build treats every data file as untrusted.** It reads only
-  `data/<project>/weekly/*.json` and `goatcounter-settings.json`, checks them
-  strictly (including that a file's thresholds are no lower than the
-  project's in `projects/*.yml`, so a file can't publish smaller numbers by
-  declaring smaller thresholds) and escapes everything.
-
-Create a deploy key that can only write to `open-stats-data`:
+- the deploy key is only on `open-stats-data`;
+- `open-stats-data` has GitHub Actions and Pages switched off;
+- this repository's `github-pages` environment only deploys from `main`;
+- the page build treats every data file as untrusted
+  ([data format](../docs/data-format.md#rules)).
 
 ```sh
 ssh-keygen -t ed25519 -N '' -C 'open-stats export' -f /etc/open-stats/deploy_key
 chown open-stats:open-stats /etc/open-stats/deploy_key
 chmod 600 /etc/open-stats/deploy_key
-cat /etc/open-stats/deploy_key.pub
-```
-
-Add the public key on GitHub under **`open-stats-data`'s** *Settings → Deploy
-keys*, with *Allow write access*. A deploy key works for that one repository
-only.
-
-Pin GitHub's SSH host keys (check them against
-<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>):
-
-```sh
+cat /etc/open-stats/deploy_key.pub   # add to open-stats-data's Deploy keys, with write access
 ssh-keyscan -t ed25519,ecdsa,rsa github.com > /etc/open-stats/known_hosts
-ssh-keygen -lf /etc/open-stats/known_hosts
-```
+ssh-keygen -lf /etc/open-stats/known_hosts   # compare with GitHub's (link below)
 
-Clone the data repository for the export to write into:
-
-```sh
 export GIT_SSH_COMMAND='ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4'
 runuser -u open-stats -- env GIT_SSH_COMMAND="$GIT_SSH_COMMAND" \
     git clone git@github.com:tkjaer/open-stats-data.git /var/lib/open-stats/repo
 runuser -u open-stats -- git -C /var/lib/open-stats/repo config user.name 'open-stats export'
 runuser -u open-stats -- git -C /var/lib/open-stats/repo config user.email '<you@example.org>'
-```
 
-`/etc/open-stats/env` was written by `configure`; see
-[`env.example`](env.example) for what it may contain. It must stay owned by
-root with mode 600 (systemd reads it before dropping privileges).
-
-Install and test the units:
-
-```sh
 install -m 0644 collector/systemd/open-stats-export.service collector/systemd/open-stats-export.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl start open-stats-export.service    # exports last week now
-journalctl -u open-stats-export.service -n 20
+systemctl start open-stats-export.service && journalctl -u open-stats-export.service -n 20
 systemctl enable --now open-stats-export.timer
-systemctl list-timers open-stats-export.timer
 ```
 
-The export runs every Monday at 03:00 UTC (with up to 10 minutes of random
-delay, and at the next boot if the server was off). It exports the ISO week
-that ended on Sunday:
+Check the host keys against
+[GitHub's fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+`/etc/open-stats/env` (from `configure`; see [`env.example`](env.example))
+must stay root-owned with mode 600.
 
-- it resets the clone to what's on GitHub first, so nothing left over locally
-  is ever pushed;
-- it writes `data/<project>/weekly/<week>.json` only if that file doesn't exist
-  yet, and `data/<project>/goatcounter-settings.json` if the settings changed;
-- it commits and pushes (three attempts);
-- every git command is killed after one minute (`--git-timeout`), and ssh
-  gives up on an unreachable or silent GitHub (`ConnectTimeout`,
-  `ServerAlive*`), so a run ends within a few minutes; `TimeoutStartSec=15min`
-  in the unit is the outer bound. A killed push changes nothing on GitHub (the
-  branch is updated atomically), and the next run starts from what's there;
-- if GoatCounter is restarting (its hourly restart refuses connections for
-  under a second), it retries for up to 20 seconds;
-- it checks every project's GoatCounter settings against `projects/*.yml`
-  before writing anything. If any differ, it writes, commits and pushes
-  nothing and exits with status 3; put them back with `open-stats configure`
-  (step 5) and start the export again. It exits with 1 on other errors. Both
-  show up as a failed unit.
+The export runs Mondays at 03:00 UTC (up to 10 minutes later, or at the next
+boot) for the ISO week that ended on Sunday. It resets the clone to GitHub's
+state, writes each week's file only if it doesn't exist, commits and pushes.
+Each git command is killed after a minute, ssh gives up on a silent GitHub,
+and `TimeoutStartSec=15min` bounds the whole run; a killed push changes
+nothing. It exits with 3, publishing nothing, if GoatCounter's settings
+differ from `projects/*.yml` (fix with `open-stats configure`), and 1 on
+other errors.
 
-To export a missed week by hand (only weeks that started at most 30 days ago;
-older data may already be gone from GoatCounter):
+A missed week can be exported by hand while it is within retention (started
+at most 30 days ago):
 
 ```sh
-systemctl start open-stats-export.service    # last week, or:
 runuser -u open-stats -- env $(cat /etc/open-stats/env) GIT_SSH_COMMAND="$GIT_SSH_COMMAND" \
     open-stats export --repo /var/lib/open-stats/repo --week 2026-W40
 ```
 
 ## The dashboard
 
-GoatCounter's dashboard and API are never exposed. To look at them, tunnel to
-the server:
-
-```sh
-ssh -L 8081:127.0.0.1:8081 <server>
-```
-
-and open <http://how-the-internet-works.localhost:8081/> (one site per project:
-`<project>.localhost`). Chrome and Firefox resolve `*.localhost` to your own
-machine by themselves; for Safari, add `127.0.0.1 how-the-internet-works.localhost` to
-`/etc/hosts`.
+Run `ssh -L 8081:127.0.0.1:8081 <server>` and open
+<http://how-the-internet-works.localhost:8081/> (Safari needs that name in
+`/etc/hosts`).
 
 ## Adding a project
 
-1. In this repository: add `projects/<name>.yml` and one line (its path) to
-   the allow-list `map` at the top of `nginx/stats.irq.dk.conf`. `go test ./...`
-   checks that they agree.
-2. Build and install the new binary (step 3) and nginx file (step 6), then
-   `nginx -t && systemctl reload nginx`.
-3. `open-stats configure <name>`: creates `<name>.localhost` linked to the
-   first site (same login), and extends the export token to cover it.
+1. Add `projects/<name>.yml` and its path to the allow-list `map` in
+   `nginx/stats.irq.dk.conf` (`go test ./...` checks they agree).
+2. Install the new binary (step 3) and nginx file (step 6), and reload nginx.
+3. Run `open-stats configure <name>`. The next export includes it.
 
-The next export includes the new project.
-
-### Adding a language
-
-nginx already forwards every two-letter lowercase code, and GoatCounter
-counts each under its own path (`/fr`), so nothing changes on the server's
-nginx or GoatCounter. A code only gets its own published column once it is in
-`publish.languages` in `projects/<name>.yml`; until then it only adds to
-`other`. To give it a column, add it there, then build and install the new
-binary (step 3). The next export publishes it; weeks published before keep
-it in `other`, and the page shows "–" for them. Don't remove a language
-from the list once a week with it is published: the page would then reject
-that week.
+**A new language** needs no server change: nginx forwards every two-letter
+code. To give it its own published column, add it to `publish.languages` and
+install the new binary. Earlier weeks keep it in `other` (shown as "–"). Never
+remove a published language from the list; the page would reject those weeks.
 
 ## Upgrading
 
-- **open-stats:** build, check and install the binary as in step 3. Nothing
-  else to restart; the timer runs the new binary next time.
-- **GoatCounter:** change [`goatcounter.version`](goatcounter.version) (version
-  and the four sha256 sums from the release), run the tests, then on the server
+- **open-stats:** install the new binary (step 3).
+- **GoatCounter:** update [`goatcounter.version`](goatcounter.version) and
+  run the tests (they fail on a new isbot version until
+  [Bot detection](#bot-detection) is checked again). Read the release notes
+  for changes to what it stores or logs. Then
   `bash collector/install-goatcounter.sh && systemctl restart goatcounter`.
-  The unit runs database migrations automatically. Check the release notes for
-  changes to how it counts, what it stores or what it logs first, and see
-  [Bot detection](#bot-detection): the tests fail until it has been checked
-  again for a new isbot version.
 
 ## Removing everything
 
@@ -469,4 +281,4 @@ rm /etc/systemd/system/goatcounter.service /etc/systemd/system/goatcounter-resta
 rm /usr/local/bin/goatcounter /usr/local/bin/open-stats
 ```
 
-and delete the deploy key from `open-stats-data` on GitHub.
+Then delete the deploy key from `open-stats-data`.
