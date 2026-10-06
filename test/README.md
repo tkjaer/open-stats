@@ -14,7 +14,8 @@ Needs Go (the version in [`../go.mod`](../go.mod)) and Docker with
    These cover the publishing rules (quiet days under 20, the threshold of 5, `other`), strict
    validation of data files, ISO weeks, the export (against a fake
    GoatCounter and a local git repository), the page (escaping, no scripts,
-   the CSP) and that nginx's allow-list matches `projects/*.yml`.
+   the CSP, a daily table with exactly the numbers the charts plot) and that
+   nginx's allow-list matches `projects/*.yml`.
 2. Cross-compiles `open-stats` for Linux, and builds the end-to-end tests
    with the race detector in a pinned Go container (it needs cgo).
 3. Starts one container ([`docker-compose.yml`](docker-compose.yml),
@@ -36,11 +37,19 @@ Needs Go (the version in [`../go.mod`](../go.mod)) and Docker with
 | `counting` | The real GoatCounter counts allowed requests under the right path and looks up the country from a public client IP; nothing else is counted; GoatCounter stores no individual pageviews and no browser details; with GoatCounter stopped, still an empty 204. |
 | `goatcounter-internals` | 12 counts from one IP address within a second are all counted with the unit's `-ratelimit` flag (and, as a control, fewer without it). Talking to GoatCounter directly: a count that fails while being processed is logged as JSON without the client IP (and, as a control, the IP is in the log without `-json`); requests from cloud and hosting ranges sent through nginx are counted, not recorded as bots (and, as a control, the `bots` table does catch a request sent around nginx with a User-Agent that isbot checks IPs for). |
 | `export` | A seeded week is exported to a local bare git repository exactly as worked out by hand (including days of 5 and 19 page loads published as totals only, days of 20 and 21 broken down, and countries under 5 folded into `other`); weeks out of range and a wrong token are refused; through the systemd unit's command, it publishes nothing and exits 3 while GoatCounter's settings differ from `projects/*.yml` (until `open-stats configure` puts them back), then commits and pushes, a second run changes nothing, a manual edit on GitHub is never overwritten and local junk is never pushed. |
-| `site` | The page built from the export shows quiet days as totals only and is well-formed HTML with no `<script>`, no event handlers, no external URLs and the strict CSP. |
+| `site` | The page built from the export shows quiet days as totals only, also in its daily table, and is well-formed HTML with no `<script>`, no event handlers, no external URLs and the strict CSP. |
 | `logs` | nginx wrote no access log and nothing about `stats.irq.dk`'s requests in its error log (at level `info`), not even after rate-limit rejections, malformed requests, dropped connections and upstream errors, while the other site's requests are logged there with their IP. |
 | `units` | The systemd units pass `systemd-analyze verify`. |
 
-5. Starts a second container from the same image with **systemd** as PID 1
+5. Checks the page that the `site` step built, in two pinned containers:
+   the [Nu HTML Checker](https://validator.github.io/validator/) (vnu) finds
+   no errors or warnings, and [`a11y/check.mjs`](a11y/check.mjs) opens it in
+   Chromium (Playwright) in light and dark mode, with every `<details>` open:
+   [axe-core](https://github.com/dequelabs/axe-core) finds no accessibility
+   violations, the page's own CSP lets its style apply, and nothing is
+   blocked, logged or fetched. (vnu can't check CSP hashes, so its warning
+   about the inline style is filtered out; Chromium checks that instead.)
+6. Starts a second container from the same image with **systemd** as PID 1
    (the `systemd` profile in [`docker-compose.yml`](docker-compose.yml),
    privileged), installs the units from
    [`../collector/systemd`](../collector/systemd) as the setup guide does, and

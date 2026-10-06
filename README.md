@@ -187,7 +187,8 @@ test/                  the end-to-end test setup
 - `go test ./...`: unit tests (publishing rules, data validation, the page,
   that nginx's allow-list matches `projects/`).
 - [`test/run.sh`](test/README.md): the unit tests, then the real nginx
-  configuration and GoatCounter in a container.
+  configuration and GoatCounter in a container, then the built page with an
+  HTML validator and an accessibility checker.
 - [`collector/build.sh`](collector/build.sh): the server binaries, with
   checksums.
 
