@@ -18,7 +18,7 @@ privacy: https://github.com/tkjaer/how-the-internet-works/blob/main/docs/privacy
 # gets 204 from nginx and is never forwarded.
 request:
   path: /how-the-internet-works/count
-  parameter: lang
+  parameter: lang   # always lang: nginx only handles this name
   allowed: [en, da]
 
 # GoatCounter site that stores this project's counts (one site per project).

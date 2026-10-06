@@ -15,11 +15,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// Parameter is the one query parameter a count carries. nginx's maps in
+// collector/nginx/stats.irq.dk.conf handle only this name.
+const Parameter = "lang"
+
 var (
 	SlugRE  = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 	ValueRE = regexp.MustCompile(`^[a-z0-9-]{1,16}$`)
 	vhostRE = regexp.MustCompile(`^[a-z0-9-]+\.localhost$`)
-	paramRE = regexp.MustCompile(`^[a-z]{1,16}$`)
 	httpsRE = regexp.MustCompile(`^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%-]*)?$`)
 )
 
@@ -70,8 +73,8 @@ func (p *Project) check(stem string) error {
 		return fmt.Errorf("url, source and privacy must be plain https URLs")
 	case p.Request.Path != "/"+p.Slug+"/count":
 		return fmt.Errorf("request.path must be /%s/count", p.Slug)
-	case !paramRE.MatchString(p.Request.Parameter):
-		return fmt.Errorf("request.parameter must match %s", paramRE)
+	case p.Request.Parameter != Parameter:
+		return fmt.Errorf("request.parameter must be %q (nginx's maps only handle that name)", Parameter)
 	case len(p.Request.Allowed) == 0:
 		return fmt.Errorf("request.allowed is empty")
 	case !vhostRE.MatchString(p.GoatCounter.VHost):

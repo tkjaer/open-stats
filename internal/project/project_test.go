@@ -54,6 +54,7 @@ func TestBadProjects(t *testing.T) {
 		"unknown key":     {"slug: how-the-internet-works", "slug: how-the-internet-works\nextra: 1"},
 		"bad path":        {"path: /how-the-internet-works/count", "path: /how-the-internet-works/x"},
 		"http url":        {"url: https://", "url: http://"},
+		"other parameter": {"parameter: lang", "parameter: locale"},
 	}
 	for name, r := range tests {
 		data := strings.Replace(string(good), r[0], r[1], 1)
@@ -120,11 +121,18 @@ func TestNginxAllowList(t *testing.T) {
 		}
 	}
 
+	// Every allowed request of every project is translated to GoatCounter's
+	// /count?p=/<value>.
 	up := mapBlock(t, string(conf), "openstats_upstream_uri")
 	m := regexp.MustCompile(`^"~(.*)"\s+"(.*)";$`).FindStringSubmatch(up[1])
-	re := regexp.MustCompile(m[1])
-	if got := re.ReplaceAllString("GET /how-the-internet-works/count?lang=da", strings.ReplaceAll(m[2], "$1", "${1}")); got != "/count?p=/da" {
-		t.Errorf("upstream URI: %q", got)
+	re, repl := regexp.MustCompile(m[1]), strings.ReplaceAll(m[2], "$1", "${1}")
+	for _, p := range ps {
+		for _, v := range p.Request.Allowed {
+			req := "GET " + p.Request.Path + "?" + p.Request.Parameter + "=" + v
+			if got := re.ReplaceAllString(req, repl); !re.MatchString(req) || got != "/count?p=/"+v {
+				t.Errorf("upstream URI for %q: %q", req, got)
+			}
+		}
 	}
 }
 
