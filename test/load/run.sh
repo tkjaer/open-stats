@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Measures what counting costs on a one-core server: the server stand-in from
 # test/docker-compose.yml with one CPU and GoatCounter in a cgroup with its
-# unit's memory limits, under a steady 20 counts a second from different
-# public IP addresses, then a burst of 200, then 60 a second (over nginx's
+# unit's memory limits, under a steady 10 counts a second from different
+# public IP addresses, then a burst of 200, then 30 a second (over nginx's
 # cap). Needs Go and Docker; takes about 4 minutes. Not part of test/run.sh.
-#   test/load/run.sh             RATE=20 SECONDS_STEADY=150 BURST=200 OVER=60
+#   test/load/run.sh             RATE=10 SECONDS_STEADY=150 BURST=200 OVER=30
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-rate=${RATE:-20} steady=${SECONDS_STEADY:-150} burst=${BURST:-200} over=${OVER:-60}
+rate=${RATE:-10} steady=${SECONDS_STEADY:-150} burst=${BURST:-200} over=${OVER:-30}
 compose=(docker compose -f test/docker-compose.yml -f test/load/docker-compose.yml)
 trap '[[ ${KEEP:-} == 1 ]] || "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
 

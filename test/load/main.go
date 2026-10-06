@@ -50,7 +50,7 @@ func publicIP() string {
 
 func main() {
 	addr := flag.String("addr", "vps:443", "nginx address")
-	rate := flag.Float64("rate", 20, "requests per second in the steady phase")
+	rate := flag.Float64("rate", 10, "requests per second in the steady phase")
 	dur := flag.Duration("duration", 150*time.Second, "length of the steady phase")
 	burst := flag.Int("burst", 200, "requests sent at once after the steady phase")
 	phase := flag.String("phase", "steady", "name of the steady phase in the output")

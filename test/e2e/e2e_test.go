@@ -228,8 +228,8 @@ func testForwarding(t *testing.T) {
 }
 
 func testRateLimits(t *testing.T) {
-	t.Log("no per-IP limit; one global cap (20/s, burst 200)")
-	time.Sleep(11 * time.Second) // let the global bucket refill after the tests above
+	t.Log("no per-IP limit; one global cap (10/s, burst 200)")
+	time.Sleep(21 * time.Second) // let the global bucket refill after the tests above (200 at 10/s)
 	cap := startCapture(t, 0)
 	defer cap.stop()
 	all204 := true
@@ -240,7 +240,7 @@ func testRateLimits(t *testing.T) {
 	check(t, all204, "all 60 answered with an empty 204")
 	check(t, len(got) == 60, "60 quick requests from one IP (a class behind one NAT): all forwarded (got %d)", len(got))
 
-	time.Sleep(11 * time.Second)
+	time.Sleep(21 * time.Second)
 	start := time.Now()
 	all204 = true
 	for range 300 {
@@ -248,7 +248,7 @@ func testRateLimits(t *testing.T) {
 	}
 	took := time.Since(start)
 	got = cap.take(time.Second)
-	most := 201 + int(20*took.Seconds()) + 1 // 200 burst + 1, plus 20 per second while sending
+	most := 201 + int(10*took.Seconds()) + 1 // 200 burst + 1, plus 10 per second while sending
 	check(t, all204, "all 300 answered with an empty 204")
 	check(t, len(got) >= 201 && len(got) <= most, "300 requests from 300 IPs in %.1f s: between 201 and %d forwarded (got %d)",
 		took.Seconds(), most, len(got))
@@ -326,6 +326,10 @@ func testCounting(t *testing.T) {
 	} {
 		r := send(t, req{target: "/how-the-internet-works/count?lang=" + c.lang, ip: c.ip, headers: c.extra})
 		check(t, r.silent204(500*time.Millisecond), "lang=%s from %s: empty 204", c.lang, c.ip)
+		// nginx answers before GoatCounter does, and GoatCounter v2.7.0 records
+		// "unknown" when two counts from a country it hasn't seen before
+		// race to add that country (locations.go, Lookup), so space them out.
+		time.Sleep(300 * time.Millisecond)
 	}
 	for _, target := range []string{"/how-the-internet-works/count?lang=fr", "/how-the-internet-works/count?lang=en&x=1", "/demo/count?lang=en", "/how-the-internet-works/count/?lang=en"} {
 		send(t, req{target: target, ip: "8.8.4.4"})

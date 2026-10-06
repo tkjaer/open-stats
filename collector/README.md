@@ -8,7 +8,7 @@ What runs on the server:
 | Part | What it does | Files |
 |---|---|---|
 | nginx | Answers every request with an empty 204, forwards allowed counts to GoatCounter | [`nginx/stats.irq.dk.conf`](nginx/stats.irq.dk.conf) |
-| GoatCounter | Keeps page loads per path (language) per hour and per country and path per day, for 31 days; listens on `127.0.0.1:8081` only | [`systemd/goatcounter.service`](systemd/goatcounter.service), [`goatcounter.version`](goatcounter.version) |
+| GoatCounter | Keeps page loads per path (language) per hour and per country and path per day, for 31 days; listens on `127.0.0.1:8081` only; restarts hourly | [`systemd/goatcounter.service`](systemd/goatcounter.service), [`systemd/goatcounter-restart.*`](systemd/), [`goatcounter.version`](goatcounter.version) |
 | `open-stats export` | Weekly: publishes last week's numbers to [open-stats-data](https://github.com/tkjaer/open-stats-data) | [`systemd/open-stats-export.*`](systemd/) |
 | `open-stats configure` | Once per project: creates the GoatCounter site, applies its settings, sets up the export token | — |
 
@@ -80,17 +80,21 @@ This downloads the release pinned in [`goatcounter.version`](goatcounter.version
 and refuses to install it unless both sha256 sums match.
 
 ```sh
-install -m 0644 collector/systemd/goatcounter.service /etc/systemd/system/
+install -m 0644 collector/systemd/goatcounter.service \
+    collector/systemd/goatcounter-restart.service \
+    collector/systemd/goatcounter-restart.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now goatcounter
+systemctl enable --now goatcounter goatcounter-restart.timer
 curl -s http://127.0.0.1:8081/status    # {"version":"v2.7.0", ...}
 ```
 
 GoatCounter then listens on `127.0.0.1:8081` only, over plain HTTP, with
 logs going to the journal. Its unit keeps it sandboxed: its own user, nothing
 writable but `/var/lib/goatcounter`, no outbound network, low CPU and I/O
-priority, at most 150 MB of memory. It runs with `-json` (see
-[Logging](#logging)) and `-ratelimit=count:1000/1` (see
+priority, at most 150 MB of memory (with `GOMEMLIMIT=100MiB`, so Go collects
+garbage harder before the cgroup throttles it). It runs with `-json` (see
+[Logging](#logging)) and `-ratelimit=count:1000/1`, and the timer restarts
+it every hour at half past (see
 [GoatCounter's rate limiter](#goatcounters-rate-limiter)).
 
 ## 5. Create the project's site
@@ -132,13 +136,15 @@ with the other sites.
 
 ### Rate limit
 
-nginx forwards at most **20 counts a second for all projects together**, after
-a burst of up to 200 (`limit_req`, zone `openstats_global`). The zone is keyed
-by the server name, so it holds no IP addresses. Requests over the cap still
-get their 204 and aren't counted. There is deliberately **no limit per IP
-address**: a class of 30 opening the page together from behind one address
-should count as 30. So the cap protects the server, not the numbers: one
-script can still fake up to 20 counts a second.
+nginx forwards at most **10 counts a second for all projects together** (about
+860,000 a day), after a burst of up to 200 (`limit_req`, zone
+`openstats_global`). The zone is keyed by the server name, so it holds no IP
+addresses. Requests over the cap still get their 204 and aren't counted.
+There is deliberately **no limit per IP address**: a class of 30 opening the
+page together from behind one address should count as 30. So the cap protects
+the server, not the numbers: one script can still fake up to 10 counts a
+second. The cap is also what bounds GoatCounter's memory between its hourly
+restarts (see [GoatCounter's rate limiter](#goatcounters-rate-limiter)).
 
 What this costs, measured with [`test/load/run.sh`](../test/load/run.sh): the
 test container on one CPU core, one nginx worker, GoatCounter in a cgroup with
@@ -147,13 +153,13 @@ public address.
 
 | Load | nginx CPU: average, busiest second | GoatCounter CPU: average, busiest second | GoatCounter memory (RSS) |
 |---|---|---|---|
-| idle | 0.1% | 0.1% | 57 MB |
-| 20 a second for 150 s | 4.6%, 7.9% | 1.9%, 5.2% | at most 59 MB |
-| then 200 at once | 8.4% in that second | 1.9% in the busiest second | at most 53 MB |
-| 60 a second for 30 s (3 times the cap) | 11.6%, 15.1% | 2.4%, 5.6% | at most 53 MB |
+| idle | 0.1% | 0.1% | 59 MB |
+| 10 a second for 150 s | 2.3%, 5.0% | 1.1%, 2.4% | at most 59 MB |
+| then 200 at once | 8.2% in the busiest second | 1.8% in the busiest second | at most 50 MB |
+| 30 a second for 30 s (3 times the cap) | 5.9%, 7.4% | 1.6%, 3.1% | at most 51 MB |
 
-Every request got an empty 204 (the burst within 96 ms), nginx let 4,000 of
-4,980 through, and GoatCounter counted exactly 4,000. The percentages are of
+Every request got an empty 204 (the burst within 92 ms), nginx let 2,165 of
+2,600 through, and GoatCounter counted exactly 2,165. The percentages are of
 one core of the test machine (Apple silicon), which is probably faster than a
 VPS core; expect up to about twice as much there. Most of nginx's share is the
 TLS handshake, which every request costs whether it's over the cap or not.
@@ -179,11 +185,43 @@ Its store, [go-limiter](https://github.com/sethvargo/go-limiter) v1.1.0's
 `memorystore` with its default settings, keeps one entry per address **in
 memory only**: the key (the address and nginx's User-Agent), when the address
 was first seen, the one-second window of its last count and how many counts
-that window had left. Nothing about the page or language. A sweep every 6
-hours removes entries unused for 12 hours
+that window had left. Nothing about the page or language. It is never written
+to disk or logged. Left alone, a sweep every 6 hours would remove entries
+unused for 12 hours
 ([memorystore/store.go](https://github.com/sethvargo/go-limiter/blob/v1.1.0/memorystore/store.go#L85-L92)),
-so an address stays until 12 to 18 hours after its last count. It is never
-written to disk or logged, and restarting GoatCounter clears it.
+so an address would stay for 12 to 18 hours after its last count, and there
+is no setting to shorten that. Each entry also costs about 400 bytes: at the
+nginx cap, 12 hours of new addresses (about 430,000) would push GoatCounter
+past its memory limit.
+
+So **GoatCounter restarts every hour**, which empties the store:
+[`goatcounter-restart.timer`](systemd/goatcounter-restart.timer) runs
+[`goatcounter-restart.service`](systemd/goatcounter-restart.service) at half
+past every hour (UTC), which runs `systemctl try-restart goatcounter`. An
+address is therefore kept **at most one hour, plus the moment a restart
+takes**, and at the cap the store holds at most about 36,000 entries (about
+15 MB). `try-restart` only restarts GoatCounter if it is running, so a stopped
+or failing GoatCounter isn't started every hour; the restart waits for a
+running export; and half past keeps it away from the export at 03:00 on
+Mondays. `GOMEMLIMIT=100MiB` in the unit is a safety net under `MemoryHigh`
+in case something else grows.
+
+A restart loses (almost) nothing that was accepted. On `SIGTERM`, GoatCounter
+stops accepting connections and waits for the requests it is handling
+([zhttp serve.go](https://github.com/arp242/zhttp/blob/9a43cabb6d05/serve.go#L126-L145)),
+then stores every buffered count before it exits
+([cmd/goatcounter/serve.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cmd/goatcounter/serve.go#L361-L378),
+[memstore.go](https://github.com/arp242/goatcounter/blob/v2.7.0/memstore.go#L200-L209)).
+The one exception: if its regular store (every 10 seconds,
+[cron/cron.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cron/cron.go#L76-L105))
+is running at that very moment, the shutdown store is refused
+([pkg/bgrun/bgrun.go](https://github.com/arp242/goatcounter/blob/v2.7.0/pkg/bgrun/bgrun.go#L155-L159)),
+and counts accepted during those few milliseconds are lost. What is lost is
+the time GoatCounter isn't listening: a restart takes about 0.25 s, and counts
+sent during about 0.4 s get their 204 from nginx but aren't counted. That's
+about 4 counts at the full cap, and usually none. Measured under systemd: at
+5 counts a second over 3 restarts, and at 100 a second, every accepted count
+was stored; the tests check this across two timer restarts at 20 a second.
 
 ### Logging
 
@@ -377,11 +415,12 @@ The next export includes the new project.
 ## Removing everything
 
 ```sh
-systemctl disable --now open-stats-export.timer goatcounter
+systemctl disable --now open-stats-export.timer goatcounter-restart.timer goatcounter
 rm /etc/nginx/sites-enabled/stats.irq.dk.conf /etc/nginx/sites-available/stats.irq.dk.conf
 systemctl reload nginx
 rm -rf /var/lib/goatcounter /var/lib/open-stats /etc/open-stats
-rm /etc/systemd/system/goatcounter.service /etc/systemd/system/open-stats-export.*
+rm /etc/systemd/system/goatcounter.service /etc/systemd/system/goatcounter-restart.* \
+    /etc/systemd/system/open-stats-export.*
 rm /usr/local/bin/goatcounter /usr/local/bin/open-stats
 ```
 
