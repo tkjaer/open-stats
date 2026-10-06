@@ -33,7 +33,8 @@ Once per page load, one request, with no cookie and no referrer:
 GET https://stats.irq.dk/how-the-internet-works/count?lang=en
 ```
 
-The only data in it is the language the app opened in (`en` or `da`). Like any
+The only data in it is the language the app opened in, as a two-letter
+lowercase code such as `en` or `da`. Like any
 request it also carries the visitor's IP address and the browser's standard
 headers. The answer is always an empty `204 No Content`, whatever happens, so
 the app learns nothing from it and is never slowed down by it.
@@ -49,8 +50,8 @@ Germany) in front of a self-hosted
   rate-limit rejections or errors, which nginx would otherwise log with the
   client's IP address;
 - **drops** (still with an empty 204) every request that isn't exactly
-  `GET /<project>/count?lang=<allowed value>`: other values, extra parameters,
-  other paths, other methods;
+  `GET /<project>/count?lang=<two lowercase letters>`: other values, extra
+  parameters, other paths, other methods;
 - **drops** requests with **Global Privacy Control** (`Sec-GPC: 1`) or
   **Do Not Track** (`DNT: 1`), obvious bots and scripts (by User-Agent), and
   browser prefetches (by their prefetch headers). It uses these headers only to
@@ -70,7 +71,7 @@ individual pageviews, sessions, referrer, User-Agent, screen size, region and
 browser language are all off. For each count it looks up the country from the
 IP address in memory (with a database built into GoatCounter, no outside
 service), then adds one to two counters: page loads per language (its path,
-`/en` or `/da`) per hour, and page loads per country and language per day.
+such as `/en`) per hour, and page loads per country and language per day.
 The IP address, the browser details and the exact time are not stored, and no
 row per visit is kept, but a counter at 1 does describe one visit (one page
 load in that language in that hour, or from that country in that language on
@@ -94,7 +95,10 @@ last complete week from GoatCounter and commits one file per project to
 **three separate tables**:
 
 1. **page loads per day**;
-2. **language per day** (`en`, `da`, and `other`, which should always be 0);
+2. **language per day**: one column for each language the project lists
+   (for How the Internet Works `en`, `da` and `de`), and `other` for every
+   other code together. A code without its own column only adds to `other`;
+   the export never reads its own count;
 3. **countries per day**. A country with **fewer than 5 page loads on a day**
    is counted under "other" for that day, so a single visit from a small
    country can't be picked out. "other" also includes page loads whose
@@ -158,7 +162,7 @@ The format is described in [`docs/data-format.md`](docs/data-format.md).
 ## Adding a project
 
 1. Add `projects/<name>.yml` (copy [`projects/how-the-internet-works.yml`](projects/how-the-internet-works.yml)).
-2. Add one line to the allow-list map in
+2. Add one line to the allow-list map (the project's path) in
    [`collector/nginx/stats.irq.dk.conf`](collector/nginx/stats.irq.dk.conf)
    (the tests check that the two agree).
 3. Build and install the new `open-stats` binary and nginx configuration on

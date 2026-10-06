@@ -208,7 +208,7 @@ func exportProject(o *Options, p *project.Project, l live, week string, days []i
 		fmt.Fprintf(o.Log, "%s: %s already published, leaving it as it is\n", p.Slug, week)
 		return written, nil
 	}
-	raw, err := o.API.Week(l.host, days)
+	raw, err := o.API.Week(l.host, p.Publish.Languages, days)
 	if err != nil {
 		return nil, err
 	}

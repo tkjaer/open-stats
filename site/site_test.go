@@ -364,7 +364,7 @@ func TestQuietDaysAndThresholdsPerWeek(t *testing.T) {
 		{w40, `<th scope="row">Wed 30 Sep</th><td colspan="2" class="quiet">0 page loads: not broken down</td>`},
 		{w40, `<th scope="row">Mon 28 Sep</th><td>101</td><td>3</td>`},
 		{page, `<th>not broken down</th>`},
-		{page, `<tr><th scope="row">2026-W40</th><td>28 Sep</td><td>310</td><td>205</td><td>101</td><td>4</td></tr>`},
+		{page, `<tr><th scope="row">2026-W40</th><td>28 Sep</td><td>310</td><td>205</td><td>101</td><td>0</td><td>4</td></tr>`},
 		{page, "2026-10-04 not broken down: 4"},
 	} {
 		if !strings.Contains(c.html, c.want) {
@@ -436,10 +436,10 @@ func TestDailyTable(t *testing.T) {
 	daily := page[start : start+strings.Index(page[start:], "</details>")]
 	for _, want := range []string{
 		"<caption>How the Internet Works: page loads and language per day, 14 Sep – 4 Oct 2026 (UTC)</caption>",
-		`<th scope="col">Day</th><th scope="col">Page loads</th><th scope="col">en</th><th scope="col">da</th></tr>`,
-		`<th scope="row"><time datetime="2026-10-04">Sun 4 Oct 2026</time></th><td>4</td><td colspan="2" class="quiet">not broken down</td></tr>`,
-		`<th scope="row"><time datetime="2026-09-28">Mon 28 Sep 2026</time></th><td>104</td><td>70</td><td>34</td></tr>`,
-		`<th scope="row"><time datetime="2026-09-24">Thu 24 Sep 2026</time></th><td colspan="3" class="quiet">no data published</td></tr>`,
+		`<th scope="col">Day</th><th scope="col">Page loads</th><th scope="col">en</th><th scope="col">da</th><th scope="col">de</th></tr>`,
+		`<th scope="row"><time datetime="2026-10-04">Sun 4 Oct 2026</time></th><td>4</td><td colspan="3" class="quiet">not broken down</td></tr>`,
+		`<th scope="row"><time datetime="2026-09-28">Mon 28 Sep 2026</time></th><td>104</td><td>70</td><td>34</td><td>0</td></tr>`,
+		`<th scope="row"><time datetime="2026-09-24">Thu 24 Sep 2026</time></th><td colspan="4" class="quiet">no data published</td></tr>`,
 	} {
 		if !strings.Contains(daily, want) {
 			t.Errorf("daily table lacks %q", want)
@@ -513,6 +513,29 @@ func TestDailyTable(t *testing.T) {
 			if plotted[day][key] != n {
 				t.Errorf("%s %s: table %d, chart %d", day, col, n, plotted[day][key])
 			}
+		}
+	}
+}
+
+// A week published before a language had its own column has no key for it;
+// the tables show "–" there, not 0.
+func TestLanguageAddedLater(t *testing.T) {
+	f := newFixture(t)
+	older := string(weekJSON(t, "2026-W40"))
+	if !strings.Contains(older, `"de": 0,`) {
+		t.Fatal("fixture has no de column")
+	}
+	f.put("2026-W40.json", []byte(strings.ReplaceAll(older, `"de": 0,`, "")))
+	page, err := f.build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`<th scope="row"><time datetime="2026-09-28">Mon 28 Sep 2026</time></th><td>104</td><td>70</td><td>34</td><td>–</td></tr>`,
+		`<tr><th scope="row">2026-W40</th><td>28 Sep</td><td>310</td><td>205</td><td>101</td><td>–</td><td>4</td></tr>`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
 		}
 	}
 }

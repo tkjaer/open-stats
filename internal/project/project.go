@@ -19,9 +19,18 @@ import (
 // collector/nginx/stats.irq.dk.conf handle only this name.
 const Parameter = "lang"
 
+// TwoLetterCode is the one kind of value a count may carry: two lowercase
+// letters (CodeRE), so at most 676 values and never free text or an ID.
+// nginx checks the same pattern and drops anything else.
+const TwoLetterCode = "two-letter-code"
+
+// maxLanguages bounds publish.languages (the export reads their counts from
+// GoatCounter in one page of 100).
+const maxLanguages = 50
+
 var (
 	SlugRE  = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
-	ValueRE = regexp.MustCompile(`^[a-z0-9-]{1,16}$`)
+	CodeRE  = regexp.MustCompile(`^[a-z]{2}$`)
 	vhostRE = regexp.MustCompile(`^[a-z0-9-]+\.localhost$`)
 	httpsRE = regexp.MustCompile(`^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%-]*)?$`)
 )
@@ -34,9 +43,9 @@ type Project struct {
 	Source  string `yaml:"source"`
 	Privacy string `yaml:"privacy"`
 	Request struct {
-		Path      string   `yaml:"path"`
-		Parameter string   `yaml:"parameter"`
-		Allowed   []string `yaml:"allowed"`
+		Path      string `yaml:"path"`
+		Parameter string `yaml:"parameter"`
+		Values    string `yaml:"values"`
 	} `yaml:"request"`
 	GoatCounter struct {
 		VHost             string `yaml:"vhost"`
@@ -46,6 +55,8 @@ type Project struct {
 	Publish struct {
 		BreakdownMinDayTotal int `yaml:"breakdown_min_day_total"`
 		CountryMinPerDay     int `yaml:"country_min_per_day"`
+		// Languages get their own column; every other code is under "other".
+		Languages []string `yaml:"languages"`
 	} `yaml:"publish"`
 }
 
@@ -75,8 +86,10 @@ func (p *Project) check(stem string) error {
 		return fmt.Errorf("request.path must be /%s/count", p.Slug)
 	case p.Request.Parameter != Parameter:
 		return fmt.Errorf("request.parameter must be %q (nginx's maps only handle that name)", Parameter)
-	case len(p.Request.Allowed) == 0:
-		return fmt.Errorf("request.allowed is empty")
+	case p.Request.Values != TwoLetterCode:
+		return fmt.Errorf("request.values must be %q (the only kind nginx's maps handle)", TwoLetterCode)
+	case len(p.Publish.Languages) == 0 || len(p.Publish.Languages) > maxLanguages:
+		return fmt.Errorf("publish.languages must list 1 to %d languages", maxLanguages)
 	case !vhostRE.MatchString(p.GoatCounter.VHost):
 		return fmt.Errorf("goatcounter.vhost must look like <name>.localhost")
 	case p.GoatCounter.Collect < 1 || p.GoatCounter.Collect >= 512:
@@ -88,9 +101,9 @@ func (p *Project) check(stem string) error {
 	case p.Publish.BreakdownMinDayTotal < p.Publish.CountryMinPerDay:
 		return fmt.Errorf("publish.breakdown_min_day_total must be at least publish.country_min_per_day")
 	}
-	for i, v := range p.Request.Allowed {
-		if !ValueRE.MatchString(v) || v == "other" || slices.Contains(p.Request.Allowed[:i], v) {
-			return fmt.Errorf("request.allowed: %q must be unique, match %s and not be \"other\"", v, ValueRE)
+	for i, v := range p.Publish.Languages {
+		if !CodeRE.MatchString(v) || slices.Contains(p.Publish.Languages[:i], v) {
+			return fmt.Errorf("publish.languages: %q must be unique and match %s", v, CodeRE)
 		}
 	}
 	return nil
