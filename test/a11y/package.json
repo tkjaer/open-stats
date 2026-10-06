@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "description": "Accessibility check of the stats page (test/run.sh); test use only",
+  "type": "module",
+  "dependencies": {
+    "axe-core": "4.14.0",
+    "playwright": "1.63.0"
+  }
+}

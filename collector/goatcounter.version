@@ -1,0 +1,9 @@
+# The GoatCounter release open-stats runs, and the sha256 of each release
+# asset (the .gz file as published on GitHub, and the binary inside it).
+# Checked by install-goatcounter.sh. Release notes:
+# https://github.com/arp242/goatcounter/releases/tag/v2.7.0
+GOATCOUNTER_VERSION=v2.7.0
+GOATCOUNTER_SHA256_LINUX_AMD64_GZ=98d221cb9c8ef2bf76d8daa9cca647839f8d8b0bb5bc7400ff9337c5da834511
+GOATCOUNTER_SHA256_LINUX_AMD64=bb753bad7cdf9d75b8f1a5183a570dcdcc8705f2419ab40698f4c752796d6567
+GOATCOUNTER_SHA256_LINUX_ARM64_GZ=ff5b2670b858bbe48802dfdc74130b6dcde2de9f5c1229b838eb9132769307dd
+GOATCOUNTER_SHA256_LINUX_ARM64=fa122210606275e10842e42a05657d06aa5336e71d559a5878f86d27760de9f3

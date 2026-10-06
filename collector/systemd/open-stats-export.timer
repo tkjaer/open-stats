@@ -1,0 +1,13 @@
+# open-stats: run the export every Monday at 03:00 UTC, for the ISO week that
+# ended on Sunday. Install as /etc/systemd/system/open-stats-export.timer.
+[Unit]
+Description=Weekly open-stats export
+
+[Timer]
+OnCalendar=Mon *-*-* 03:00:00 UTC
+RandomizedDelaySec=10min
+# Run at the next boot if the server was off on Monday morning.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,53 @@
+# open-stats: weekly export of the published aggregates to GitHub.
+# Install as /etc/systemd/system/open-stats-export.service (see collector/README.md).
+[Unit]
+Description=open-stats weekly export
+Documentation=https://github.com/tkjaer/open-stats/blob/main/collector/README.md
+Wants=network-online.target
+After=network-online.target goatcounter.service
+
+[Service]
+Type=oneshot
+User=open-stats
+Group=open-stats
+# GOATCOUNTER_TOKEN (and optional overrides); root:root, mode 600.
+EnvironmentFile=/etc/open-stats/env
+Environment=HOME=/var/lib/open-stats
+Environment="GIT_SSH_COMMAND=ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# Each git command is killed after 1 minute (-git-timeout); this bounds the
+# whole run, retries included. The export never delays goatcounter-restart.
+TimeoutStartSec=15min
+ExecStart=/usr/local/bin/open-stats export --repo /var/lib/open-stats/repo
+
+StateDirectory=open-stats
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/open-stats
+UMask=0022
+
+CPUWeight=20
+IOWeight=20
+MemoryMax=150M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=

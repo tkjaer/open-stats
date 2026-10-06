@@ -1,0 +1,44 @@
+# How the Internet Works: what the app sends and what is published.
+#
+# Changing this file does not change the server by itself: it is built into
+# the open-stats binary, which is installed on the VPS by hand (see
+# collector/README.md). Keep the nginx allow-list in
+# collector/nginx/stats.irq.dk.conf in sync; `go test ./...` checks that they
+# match.
+
+slug: how-the-internet-works
+name: How the Internet Works
+url: https://tkjaer.github.io/how-the-internet-works/
+source: https://github.com/tkjaer/how-the-internet-works
+privacy: https://github.com/tkjaer/how-the-internet-works/blob/main/docs/privacy.md
+
+# The one request a visitor's browser sends, once per page load:
+#   GET https://stats.irq.dk/how-the-internet-works/count?lang=<value>
+# Anything else (other values, other parameters, other paths or methods)
+# gets 204 from nginx and is never forwarded.
+request:
+  path: /how-the-internet-works/count
+  parameter: lang   # always lang: nginx only handles this name
+  allowed: [en, da]
+
+# GoatCounter site that stores this project's counts (one site per project).
+goatcounter:
+  vhost: how-the-internet-works.localhost
+  # GoatCounter's "collect" bitmask: 16 = country only. Individual
+  # pageviews, sessions, referrer, User-Agent, screen size, region and
+  # browser language are all off.
+  collect: 16
+  data_retention_days: 31
+
+# Published tables, one file per ISO week, UTC: page loads per day, and
+# separately language per day and countries per day (never a table of
+# language by country).
+publish:
+  # On a day with fewer page loads than this in total, only the total is
+  # published: no language or country numbers for that day. On small days the
+  # separate tables could otherwise be combined to single out one visit
+  # (5 page loads, all from DK, 1 of them "da").
+  breakdown_min_day_total: 20
+  # A country with fewer page loads than this on a day is counted under
+  # "other" for that day. No weekly country numbers are published.
+  country_min_per_day: 5

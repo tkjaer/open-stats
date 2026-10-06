@@ -1,0 +1,15 @@
+# open-stats: restart GoatCounter every hour, at half past, which clears the IP
+# addresses its rate limiter keeps in memory (see "GoatCounter's rate limiter"
+# in collector/README.md). Half past keeps it away from the weekly export.
+# Install as /etc/systemd/system/goatcounter-restart.timer.
+[Unit]
+Description=Hourly GoatCounter restart (clears its rate limiter)
+
+[Timer]
+OnCalendar=*-*-* *:30:00 UTC
+AccuracySec=1s
+# No catching up after boot: GoatCounter has just started then anyway.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
