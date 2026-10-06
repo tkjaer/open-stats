@@ -75,7 +75,10 @@ such as `/en`) per hour, and page loads per country and language per day.
 The IP address, the browser details and the exact time are not stored, and no
 row per visit is kept, but a counter at 1 does describe one visit (one page
 load in that language in that hour, or from that country in that language on
-that day). The counters are **deleted after 31 days** (GoatCounter's minimum).
+that day). It also keeps copies of the same counts in a few other tables, with
+the screen-size, browser-language and referrer fields left empty
+([details](collector/README.md#what-goatcounter-stores)). The counters and
+their copies are **deleted after 31 days** (GoatCounter's minimum).
 Its dashboard and API are never exposed to the internet; they are only
 reachable over an SSH tunnel.
 

@@ -8,7 +8,7 @@ What runs on the server:
 | Part | What it does | Files |
 |---|---|---|
 | nginx | Answers every request with an empty 204, forwards allowed counts to GoatCounter | [`nginx/stats.irq.dk.conf`](nginx/stats.irq.dk.conf) |
-| GoatCounter | Keeps page loads per path (language) per hour and per country and path per day, for 31 days; listens on `127.0.0.1:8081` only; restarts hourly | [`systemd/goatcounter.service`](systemd/goatcounter.service), [`systemd/goatcounter-restart.*`](systemd/), [`goatcounter.version`](goatcounter.version) |
+| GoatCounter | Keeps page loads per path (language) per hour and per country and path per day ([plus copies](#what-goatcounter-stores)), for 31 days; listens on `127.0.0.1:8081` only; restarts hourly | [`systemd/goatcounter.service`](systemd/goatcounter.service), [`systemd/goatcounter-restart.*`](systemd/), [`goatcounter.version`](goatcounter.version) |
 | `open-stats export` | Weekly: publishes last week's numbers to [open-stats-data](https://github.com/tkjaer/open-stats-data) | [`systemd/open-stats-export.*`](systemd/) |
 | `open-stats configure` | Once per project: creates the GoatCounter site, applies its settings, sets up the export token | — |
 
@@ -121,6 +121,34 @@ The settings it applies:
 
 The dashboard user's time zone must stay **UTC** (it's the default): GoatCounter
 groups days by it, and the export refuses to run otherwise.
+
+### What GoatCounter stores
+
+With these settings, each count GoatCounter adds (it skips bots) ends up in
+these tables of its database, per site:
+
+| Table | One row per | Holds |
+|---|---|---|
+| `hit_counts` | path, hour | the count |
+| `location_stats` | path, day, country | the count |
+| `hit_stats` | path, day | the count per hour of that day |
+| `ref_counts` | path, hour, referrer | the count; the referrer is always the empty one |
+| `size_stats` | path, day, screen width | the count; the width is always 0 |
+| `language_stats` | path, day, browser language | the count; the language is always empty |
+
+The last four are copies of `hit_counts`: GoatCounter fills them for every
+count whatever it collects, but blanks the referrer, screen size and browser
+language before that when they aren't collected
+([memstore.go](https://github.com/arp242/goatcounter/blob/v2.7.0/memstore.go#L268-L301),
+[cron/tasks.go](https://github.com/arp242/goatcounter/blob/v2.7.0/cron/tasks.go#L138-L148)),
+so they hold nothing `hit_counts` doesn't. `browser_stats` and
+`system_stats` stay empty (they skip counts without a browser or system), as
+do `campaign_stats` (nginx passes on no campaign parameter), `hits`
+(individual pageviews) and `bots` (see [Bot detection](#bot-detection)).
+Retention deletes rows older than 31 days from all of these tables
+([`Site.DeleteOlderThan`](https://github.com/arp242/goatcounter/blob/v2.7.0/site.go#L647-L716)).
+The e2e test checks that the copies hold the same counts with these fields
+empty, and that the other tables stay empty.
 
 ## 6. nginx
 

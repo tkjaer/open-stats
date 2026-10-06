@@ -369,6 +369,36 @@ func testCounting(t *testing.T) {
 	t.Log("-- GoatCounter stores no IPs, User-Agents, individual pageviews or bot records")
 	check(t, num(gcQuery(t, "select count(*) as n from hits")[0]["n"]) == 0, "no individual pageviews stored")
 	check(t, num(gcQuery(t, "select count(*) as n from bots")[0]["n"]) == 0, "no bot records")
+
+	t.Log("-- GoatCounter's other count tables are copies of hit_counts with empty fields")
+	site := "(select site_id from sites where cname = 'how-the-internet-works.localhost')"
+	sum := func(sql string) int { return num(gcQuery(t, "select coalesce(sum(n), 0) as n from ("+sql+")")[0]["n"]) }
+	counted := sum("select total as n from hit_counts where site_id = " + site)
+	check(t, counted == 6, "hit_counts holds the 6 counts (got %d)", counted)
+	hourly := 0
+	for _, r := range gcQuery(t, "select cast(stats as text) as stats from hit_stats where site_id = "+site) {
+		var hours []int
+		err := json.Unmarshal([]byte(r["stats"].(string)), &hours)
+		check(t, err == nil && len(hours) == 24, "hit_stats row is 24 hourly counts (%v)", r["stats"])
+		for _, n := range hours {
+			hourly += n
+		}
+	}
+	check(t, hourly == counted, "hit_stats: the same %d counts by hour (got %d)", counted, hourly)
+	for _, c := range []struct{ table, field, total, empty string }{
+		{"ref_counts", "referrer", "select total as n from ref_counts where site_id = " + site,
+			"select count(*) as n from ref_counts c join refs r using (ref_id) where c.site_id = " + site + " and (r.ref != '' or c.total = 0)"},
+		{"size_stats", "screen width", "select count as n from size_stats where site_id = " + site,
+			"select count(*) as n from size_stats where site_id = " + site + " and width != 0"},
+		{"language_stats", "browser language", "select count as n from language_stats where site_id = " + site,
+			"select count(*) as n from language_stats where site_id = " + site + " and language != ''"},
+	} {
+		check(t, sum(c.total) == counted, "%s: the same %d counts (got %d)", c.table, counted, sum(c.total))
+		check(t, num(gcQuery(t, c.empty)[0]["n"]) == 0, "%s: %s always empty", c.table, c.field)
+	}
+	for _, table := range []string{"browser_stats", "system_stats", "campaign_stats"} {
+		check(t, num(gcQuery(t, "select count(*) as n from "+table)[0]["n"]) == 0, "%s empty", table)
+	}
 	var all []string
 	for _, r := range gcQuery(t, "select path from paths order by path") {
 		all = append(all, r["path"].(string))
