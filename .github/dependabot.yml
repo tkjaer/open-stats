@@ -1,0 +1,35 @@
+# Weekly version updates, grouped into one PR per ecosystem, on Monday morning.
+# Security updates come separately, as soon as an advisory lands.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Europe/Copenhagen
+    groups:
+      go:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Europe/Copenhagen
+    groups:
+      actions:
+        patterns: ['*']
+  # The test container's base image (test/vps/Dockerfile).
+  - package-ecosystem: docker
+    directory: /test/vps
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+      timezone: Europe/Copenhagen
+    groups:
+      docker:
+        patterns: ['*']
