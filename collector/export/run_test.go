@@ -321,3 +321,57 @@ func TestRunLeftovers(t *testing.T) {
 		t.Errorf("clone not clean: %q", st)
 	}
 }
+
+// A push that hangs (a stalled SSH connection) fails within the git deadline
+// and leaves nothing half-done: origin is unchanged, and the next run, with a
+// working connection, publishes the week.
+func TestRunHungPush(t *testing.T) {
+	calls := 0
+	srv := fakeGoatCounter(t, "Etc/UTC", &calls)
+	defer srv.Close()
+	ps, _ := project.LoadAll(projects.FS, "how-the-internet-works")
+	tmp, origin, clone := gitRepos(t)
+	head := run(t, "git", "--git-dir", origin, "rev-parse", "main")
+
+	// A fake ssh: runs fetches locally, and with HANG_PUSH set, hangs on pushes
+	// (with a child that keeps git's stderr open, like a real ssh would).
+	fake := filepath.Join(tmp, "fake-ssh")
+	os.WriteFile(fake, []byte("#!/bin/sh\nfor cmd; do :; done\n"+
+		"case $cmd in git-receive-pack*) if [ -n \"$HANG_PUSH\" ]; then sleep 600 & wait; fi;; esac\n"+
+		"exec sh -c \"$cmd\"\n"), 0o755)
+	run(t, "git", "-C", clone, "remote", "set-url", "origin", "ssh://fake"+origin)
+	t.Setenv("GIT_SSH_COMMAND", fake)
+	t.Setenv("GIT_SSH_VARIANT", "simple")
+	t.Setenv("HANG_PUSH", "1")
+
+	api := goatcounter.NewAPI(srv.URL, "tok")
+	api.Pause = 0
+	var log strings.Builder
+	o := Options{Projects: ps, Repo: clone, Now: time.Date(2026, 10, 5, 3, 0, 0, 0, time.UTC), API: api, Log: &log,
+		GitTimeout: 2 * time.Second, RetryPause: 0}
+	start := time.Now()
+	err := Run(o)
+	took := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "timed out after 2s") {
+		t.Fatalf("Run with a hanging push: %v\n%s", err, &log)
+	}
+	// Three push attempts of 2 s each, plus fetches and git's own work.
+	if took > 15*time.Second {
+		t.Errorf("took %v", took)
+	}
+	if got := run(t, "git", "--git-dir", origin, "rev-parse", "main"); got != head {
+		t.Error("origin changed")
+	}
+
+	t.Setenv("HANG_PUSH", "")
+	log.Reset()
+	if err := Run(o); err != nil {
+		t.Fatalf("Run after the connection works again: %v\n%s", err, &log)
+	}
+	if msg := run(t, "git", "--git-dir", origin, "log", "-1", "--format=%s", "main"); msg != "data: 2026-W40\n" {
+		t.Errorf("commit message %q", msg)
+	}
+	if got := run(t, "git", "--git-dir", origin, "rev-parse", "main~1"); got != head {
+		t.Error("origin is not exactly one commit ahead")
+	}
+}

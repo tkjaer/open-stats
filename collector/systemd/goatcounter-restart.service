@@ -1,12 +1,13 @@
 # open-stats: started by goatcounter-restart.timer. Restarts GoatCounter only if
 # it is running, so it never starts a stopped or failing one. GoatCounter
 # stores the counts it holds before it exits.
+# Deliberately not ordered after open-stats-export.service, so a slow or hung
+# export can never delay the restart. The export retries GoatCounter for 20
+# seconds if it finds it restarting.
 # Install as /etc/systemd/system/goatcounter-restart.service.
 [Unit]
 Description=Restart GoatCounter (clears its rate limiter)
 Documentation=https://github.com/tkjaer/open-stats/blob/main/collector/README.md
-# Wait for a running export to finish first.
-After=open-stats-export.service
 
 [Service]
 Type=oneshot

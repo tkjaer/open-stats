@@ -120,6 +120,7 @@ func runExport(args []string) (int, error) {
 	out := fs.String("out", "", "plain directory to write data/ into, without git")
 	branch := fs.String("branch", "main", "branch to push to")
 	dir := fs.String("projects", "", "read projects/*.yml from this directory instead of the built-in ones")
+	gitTimeout := fs.Duration("git-timeout", export.DefaultGitTimeout, "kill any single git command that runs longer than this")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
 		fs.Usage()
@@ -139,7 +140,7 @@ func runExport(args []string) (int, error) {
 	}
 	err = export.Run(export.Options{
 		Week: *week, Projects: ps, Repo: *repo, Out: *out, Branch: *branch, Now: time.Now().UTC(),
-		API: goatcounter.NewAPI(url, token), Log: os.Stdout, RetryPause: 10 * time.Second,
+		API: goatcounter.NewAPI(url, token), Log: os.Stdout, RetryPause: 10 * time.Second, GitTimeout: *gitTimeout,
 	})
 	var se *export.SettingsError
 	if errors.As(err, &se) {

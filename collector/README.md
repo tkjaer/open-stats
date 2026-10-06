@@ -201,10 +201,11 @@ past every hour (UTC), which runs `systemctl try-restart goatcounter`. An
 address is therefore kept **at most one hour, plus the moment a restart
 takes**, and at the cap the store holds at most about 36,000 entries (about
 15 MB). `try-restart` only restarts GoatCounter if it is running, so a stopped
-or failing GoatCounter isn't started every hour; the restart waits for a
-running export; and half past keeps it away from the export at 03:00 on
-Mondays. `GOMEMLIMIT=100MiB` in the unit is a safety net under `MemoryHigh`
-in case something else grows.
+or failing GoatCounter isn't started every hour. The restart deliberately
+doesn't wait for the export, so a slow or hung export can never delay it
+(see [step 7](#7-the-weekly-export)); half past keeps it away from the export
+at 03:00 on Mondays anyway. `GOMEMLIMIT=100MiB` in the unit is a safety net
+under `MemoryHigh` in case something else grows.
 
 A restart loses (almost) nothing that was accepted. On `SIGTERM`, GoatCounter
 stops accepting connections and waits for the requests it is handling
@@ -330,7 +331,7 @@ ssh-keygen -lf /etc/open-stats/known_hosts
 Clone the data repository for the export to write into:
 
 ```sh
-export GIT_SSH_COMMAND='ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts'
+export GIT_SSH_COMMAND='ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4'
 runuser -u open-stats -- env GIT_SSH_COMMAND="$GIT_SSH_COMMAND" \
     git clone git@github.com:tkjaer/open-stats-data.git /var/lib/open-stats/repo
 runuser -u open-stats -- git -C /var/lib/open-stats/repo config user.name 'open-stats export'
@@ -361,6 +362,13 @@ that ended on Sunday:
 - it writes `data/<project>/weekly/<week>.json` only if that file doesn't exist
   yet, and `data/<project>/goatcounter-settings.json` if the settings changed;
 - it commits and pushes (three attempts);
+- every git command is killed after one minute (`--git-timeout`), and ssh
+  gives up on an unreachable or silent GitHub (`ConnectTimeout`,
+  `ServerAlive*`), so a run ends within a few minutes; `TimeoutStartSec=15min`
+  in the unit is the outer bound. A killed push changes nothing on GitHub (the
+  branch is updated atomically), and the next run starts from what's there;
+- if GoatCounter is restarting (its hourly restart refuses connections for
+  under a second), it retries for up to 20 seconds;
 - it checks every project's GoatCounter settings against `projects/*.yml`
   before writing anything. If any differ, it writes, commits and pushes
   nothing and exits with status 3; put them back with `open-stats configure`

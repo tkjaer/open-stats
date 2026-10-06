@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tkjaer/open-stats/internal/dataformat"
@@ -28,11 +29,14 @@ type API struct {
 	Token   string
 	// GoatCounter allows 4 API requests a second.
 	Pause time.Duration
-	HTTP  *http.Client
+	// How long to keep trying while the connection is refused, e.g. while
+	// GoatCounter restarts (it does every hour, for about half a second).
+	RefusedFor time.Duration
+	HTTP       *http.Client
 }
 
 func NewAPI(baseURL, token string) *API {
-	return &API{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, Pause: 300 * time.Millisecond,
+	return &API{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, Pause: 300 * time.Millisecond, RefusedFor: 20 * time.Second,
 		HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
 
@@ -50,24 +54,41 @@ func (a *API) Do(method, host, path string, params url.Values, body, out any) er
 	if len(params) > 0 {
 		u += "?" + params.Encode()
 	}
-	var rd io.Reader
+	var b []byte
 	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if b, err = json.Marshal(body); err != nil {
 			return err
 		}
-		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, u, rd)
-	if err != nil {
-		return err
+	var (
+		resp     *http.Response
+		err      error
+		deadline = time.Now().Add(a.RefusedFor)
+	)
+	for {
+		var rd io.Reader
+		if b != nil {
+			rd = bytes.NewReader(b)
+		}
+		req, rerr := http.NewRequest(method, u, rd)
+		if rerr != nil {
+			return rerr
+		}
+		req.Host = host
+		req.Header.Set("Authorization", "Bearer "+a.Token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		time.Sleep(a.Pause)
+		resp, err = a.HTTP.Do(req)
+		// A refused connection never reached GoatCounter, so trying again is
+		// safe for any method.
+		if err != nil && errors.Is(err, syscall.ECONNREFUSED) && time.Now().Before(deadline) {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		break
 	}
-	req.Host = host
-	req.Header.Set("Authorization", "Bearer "+a.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	time.Sleep(a.Pause)
-	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("GoatCounter at %s not reachable: %w", a.BaseURL, err)
 	}

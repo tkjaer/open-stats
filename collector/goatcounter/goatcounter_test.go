@@ -5,10 +5,12 @@ package goatcounter
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/tkjaer/open-stats/internal/isoweek"
 )
@@ -83,5 +85,45 @@ func TestWeekRefusesBrokenPaging(t *testing.T) {
 		if _, err := fakeLocations(t, 150, broken).Week("x.localhost", days); err == nil {
 			t.Errorf("%s: no error", broken)
 		}
+	}
+}
+
+// While GoatCounter restarts, its port refuses connections for a moment; the
+// API keeps trying for RefusedFor.
+func TestRetriesRefused(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	a := NewAPI("http://"+addr, "tok")
+	a.Pause, a.RefusedFor = 0, 0
+	if _, err := a.Version("x.localhost"); err == nil {
+		t.Fatal("nothing listening, no retries: no error")
+	}
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"version":"v2.7.0"}`)
+	})}
+	defer srv.Close()
+	go func() {
+		time.Sleep(time.Second)
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		srv.Serve(ln)
+	}()
+	a.RefusedFor = 10 * time.Second
+	start := time.Now()
+	v, err := a.Version("x.localhost")
+	if err != nil || v != "v2.7.0" {
+		t.Fatalf("after a second of refused connections: %q, %v", v, err)
+	}
+	if took := time.Since(start); took < time.Second || took > 3*time.Second {
+		t.Errorf("took %v", took)
 	}
 }

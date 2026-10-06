@@ -13,12 +13,14 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tkjaer/open-stats/collector/goatcounter"
@@ -42,6 +44,8 @@ type Options struct {
 	Log      io.Writer
 	// Pause between push attempts.
 	RetryPause time.Duration
+	// Deadline for each git command (default DefaultGitTimeout).
+	GitTimeout time.Duration
 }
 
 // CheckExportable returns the week's days, or why it can't be exported today.
@@ -92,11 +96,29 @@ func Problems(p *project.Project, snap dataformat.Settings) []string {
 	return out
 }
 
-func git(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+// DefaultGitTimeout bounds each git command, so a hung fetch or push (e.g. a
+// stalled SSH connection) fails the export instead of blocking it.
+const DefaultGitTimeout = time.Minute
+
+func git(o *Options, args ...string) (string, error) {
+	timeout := o.GitTimeout
+	if timeout <= 0 {
+		timeout = DefaultGitTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", o.Repo}, args...)...)
+	// On timeout, kill git and everything it started (ssh), and don't wait
+	// for output from anything that survives.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("timed out after %s", timeout)
+		}
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
@@ -105,14 +127,14 @@ func git(repo string, args ...string) (string, error) {
 // prepare resets the clone to what's on GitHub: it only ever holds data
 // written here, and nothing local (e.g. from a failed run) may be pushed.
 // The checkout is forced so that leftovers can't block it.
-func prepare(repo, branch string) error {
+func prepare(o *Options, branch string) error {
 	for _, args := range [][]string{
 		{"fetch", "--quiet", "origin", branch},
 		{"checkout", "--quiet", "--force", "-B", branch, "origin/" + branch},
 		{"reset", "--quiet", "--hard", "origin/" + branch},
 		{"clean", "--quiet", "-fdx"},
 	} {
-		if _, err := git(repo, args...); err != nil {
+		if _, err := git(o, args...); err != nil {
 			return err
 		}
 	}
@@ -234,7 +256,7 @@ func Run(o Options) error {
 
 	for attempt := 1; ; attempt++ {
 		if useGit {
-			if err := prepare(dir, o.Branch); err != nil {
+			if err := prepare(&o, o.Branch); err != nil {
 				return err
 			}
 		}
@@ -268,13 +290,13 @@ func Run(o Options) error {
 				msg = "data: " + week
 			}
 		}
-		if _, err := git(dir, append([]string{"add", "--"}, written...)...); err != nil {
+		if _, err := git(&o, append([]string{"add", "--"}, written...)...); err != nil {
 			return err
 		}
-		if _, err := git(dir, "commit", "--quiet", "-m", msg); err != nil {
+		if _, err := git(&o, "commit", "--quiet", "-m", msg); err != nil {
 			return err
 		}
-		_, err := git(dir, "push", "--quiet", "origin", "HEAD:"+o.Branch)
+		_, err := git(&o, "push", "--quiet", "origin", "HEAD:"+o.Branch)
 		if err == nil {
 			fmt.Fprintf(o.Log, "pushed %d file(s) for %s\n", len(written), week)
 			return nil

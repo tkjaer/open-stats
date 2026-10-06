@@ -33,6 +33,7 @@ func TestSystemd(t *testing.T) {
 		{"restart-only-if-running", testRestartOnlyIfRunning},
 		{"restart-clears-rate-limiter", testRestartClearsLimiter},
 		{"counts-across-restarts", testCountsAcrossRestarts},
+		{"export-cannot-delay-restart", testExportCannotDelayRestart},
 		{"restart-schedule", testRestartSchedule},
 	}
 	for _, s := range steps {
@@ -305,4 +306,67 @@ func testRestartSchedule(t *testing.T) {
 	check(t, err == nil && in > 0 && in <= time.Hour, "next restart within the hour (%s, in %v)", next, in.Round(time.Second))
 	acc := strings.TrimSpace(run(t, "systemctl", "show", "-p", "AccuracyUSec", "--value", "goatcounter-restart.timer"))
 	check(t, acc == "1s", "timer accuracy 1s (got %s)", acc)
+}
+
+// testExportCannotDelayRestart starts the export with a remote that never
+// answers (a fake ssh that hangs, as a stalled connection to GitHub would),
+// and checks that the hourly restart still happens at once, and that the
+// export fails by itself within its git deadline.
+func testExportCannotDelayRestart(t *testing.T) {
+	const (
+		repo     = "/var/lib/open-stats/repo"
+		fakeSSH  = "/usr/local/bin/hang-ssh"
+		exportIn = unitDir + "/open-stats-export.service.d/test.conf"
+		deadline = 5 * time.Second
+	)
+	got := strings.TrimSpace(run(t, "systemctl", "show", "-p", "TimeoutStartUSec", "--value", "open-stats-export.service"))
+	check(t, got == "15min", "open-stats-export.service TimeoutStartSec=15min (got %s)", got)
+	order := run(t, "systemctl", "show", "-p", "After", "--value", "goatcounter-restart.service")
+	check(t, !strings.Contains(order, "open-stats-export"), "goatcounter-restart.service isn't ordered after the export (After=%s)", strings.TrimSpace(order))
+
+	os.RemoveAll(repo)
+	run(t, "runuser", "-u", "open-stats", "--", "git", "init", "--quiet", "-b", "main", repo)
+	run(t, "runuser", "-u", "open-stats", "--", "git", "-C", repo, "remote", "add", "origin", "ssh://fake/srv/origin.git")
+	os.WriteFile(fakeSSH, []byte("#!/bin/sh\nsleep 600\n"), 0o755)
+	os.MkdirAll(filepath.Dir(exportIn), 0o755)
+	os.WriteFile(exportIn, []byte(fmt.Sprintf("[Service]\nEnvironment=GIT_SSH_COMMAND=%s GIT_SSH_VARIANT=simple\n"+
+		"ExecStart=\nExecStart=%s export --repo %s --git-timeout %s\n", fakeSSH, osBin, repo, deadline)), 0o644)
+	t.Cleanup(func() {
+		os.RemoveAll(filepath.Dir(exportIn))
+		os.RemoveAll(repo)
+		os.Remove(fakeSSH)
+		runE(nil, "systemctl", "daemon-reload")
+		runE(nil, "systemctl", "reset-failed", "open-stats-export.service")
+	})
+	run(t, "systemctl", "daemon-reload")
+
+	start := time.Now()
+	run(t, "systemctl", "start", "--no-block", "open-stats-export.service")
+	if !check(t, waitFor(t, "the export to hang on its remote", func() bool {
+		_, err := runE(nil, "pgrep", "-f", fakeSSH)
+		return err == nil
+	}), "the export is waiting on a remote that never answers") {
+		return
+	}
+
+	before := mainPID(t)
+	t0 := time.Now()
+	_, err := runE(nil, "timeout", "30", "systemctl", "start", "goatcounter-restart.service")
+	took := time.Since(t0)
+	exporting := isActive("open-stats-export.service")
+	after := mainPID(t)
+	check(t, err == nil && took < 5*time.Second, "the restart ran while the export hung, in %v (%v)", took.Round(time.Millisecond), err)
+	check(t, exporting == "activating", "the export was still running during the restart (%s)", exporting)
+	check(t, after != before && after != "0", "GoatCounter restarted (MainPID %s -> %s)", before, after)
+	waitUp(t)
+
+	waitFor(t, "the export to give up", func() bool { return isActive("open-stats-export.service") != "activating" })
+	took = time.Since(start)
+	result := strings.TrimSpace(run(t, "systemctl", "show", "-p", "Result", "--value", "open-stats-export.service"))
+	log := run(t, "journalctl", "-u", "open-stats-export.service", "--since", "@"+fmt.Sprint(start.Unix()-1), "-o", "cat")
+	check(t, result == "exit-code", "the export failed (Result=%s)", result)
+	check(t, strings.Contains(log, "timed out after "+deadline.String()), "it failed because git timed out:\n%s", indent(log))
+	check(t, took < deadline+15*time.Second, "within its git deadline (%v after it started)", took.Round(time.Second))
+	_, err = runE(nil, "pgrep", "-f", fakeSSH)
+	check(t, err != nil, "nothing the export started is left running")
 }

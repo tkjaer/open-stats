@@ -52,6 +52,7 @@ Needs Go (the version in [`../go.mod`](../go.mod)) and Docker with
 | `restart-only-if-running` | `goatcounter-restart.service` restarts a running GoatCounter and leaves a stopped one stopped. |
 | `restart-clears-rate-limiter` | With a test-only limit of 2 counts an hour per IP address, a third count is refused; after the timer (set to every 20 seconds for the test) restarts GoatCounter, the same address is counted again, so its key is gone. |
 | `counts-across-restarts` | 20 counts a second for about a minute while the timer restarts GoatCounter at least twice: every count GoatCounter accepted is stored, and at most a second's worth per restart is refused (it measures how long; about 0.4 s). |
+| `export-cannot-delay-restart` | The export runs against a remote that never answers (a fake ssh that hangs, like a stalled connection to GitHub), with a 5-second git deadline: the restart still happens at once while it hangs, the export fails by itself within its deadline with nothing left running, its unit has `TimeoutStartSec=15min`, and the restart isn't ordered after it. |
 | `restart-schedule` | The real timer fires every hour at half past (UTC), next within the hour, with 1 s accuracy. |
 
 The first container differs from the server in these ways, all for testing:

@@ -13,7 +13,10 @@ Group=open-stats
 # GOATCOUNTER_TOKEN (and optional overrides); root:root, mode 600.
 EnvironmentFile=/etc/open-stats/env
 Environment=HOME=/var/lib/open-stats
-Environment="GIT_SSH_COMMAND=ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts"
+Environment="GIT_SSH_COMMAND=ssh -i /etc/open-stats/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/open-stats/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+# Each git command is killed after 1 minute (-git-timeout); this bounds the
+# whole run, retries included. The export never delays goatcounter-restart.
+TimeoutStartSec=15min
 ExecStart=/usr/local/bin/open-stats export --repo /var/lib/open-stats/repo
 
 StateDirectory=open-stats
