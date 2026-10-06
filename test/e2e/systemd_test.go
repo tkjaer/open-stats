@@ -222,8 +222,9 @@ func testCountsAcrossRestarts(t *testing.T) {
 		fails []time.Time
 		pids  = map[string]bool{mainPID(t): true}
 	)
-	stop := make(chan struct{})
+	stop, watched := make(chan struct{}), make(chan struct{})
 	go func() { // watch for restarts
+		defer close(watched)
 		for {
 			select {
 			case <-stop:
@@ -259,6 +260,7 @@ func testCountsAcrossRestarts(t *testing.T) {
 	tick.Stop()
 	wg.Wait()
 	close(stop)
+	<-watched
 	setTestTimer(t, false)
 	waitUp(t)
 	restarts, failed := len(pids)-1, len(fails)

@@ -10,12 +10,13 @@ Needs Go (the version in [`../go.mod`](../go.mod)) and Docker with
 
 ## What it does
 
-1. **Unit tests** on this machine: `gofmt`, `go vet` and `go test ./...`.
+1. **Unit tests** on this machine: `gofmt`, `go vet` and `go test -race ./...`.
    These cover the publishing rules (quiet days under 20, the threshold of 5, `other`), strict
    validation of data files, ISO weeks, the export (against a fake
    GoatCounter and a local git repository), the page (escaping, no scripts,
    the CSP) and that nginx's allow-list matches `projects/*.yml`.
-2. Cross-compiles `open-stats` and the end-to-end tests for Linux.
+2. Cross-compiles `open-stats` for Linux, and builds the end-to-end tests
+   with the race detector in a pinned Go container (it needs cgo).
 3. Starts one container ([`docker-compose.yml`](docker-compose.yml),
    [`vps/Dockerfile`](vps/Dockerfile)) standing in for the server: Debian 12,
    its nginx with [`../collector/nginx/stats.irq.dk.conf`](../collector/nginx/stats.irq.dk.conf)
