@@ -1,0 +1,19 @@
+# Local test setup: one container standing in for the VPS (Debian 12, its
+# nginx with collector/nginx/stats.irq.dk.conf unchanged, GoatCounter from the
+# pinned release). Run everything with test/run.sh.
+name: open-stats-test
+services:
+  vps:
+    build:
+      context: ..
+      dockerfile: test/vps/Dockerfile
+    volumes:
+      - ..:/repo:ro
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv6.conf.lo.disable_ipv6: 0
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "-o", "/dev/null", "--resolve", "stats.irq.dk:443:127.0.0.1", "https://stats.irq.dk/"]
+      interval: 1s
+      timeout: 2s
+      retries: 30

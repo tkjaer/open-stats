@@ -1,0 +1,78 @@
+# Builds the static page and publishes it with GitHub Pages: the code (the
+# renderer) from this repository's main branch, the data from
+# tkjaer/open-stats-data. The server can write to the data repository only, so
+# it can never change the code that runs on the page's origin. See
+# collector/README.md, step 7.
+#
+# The data repository has no workflows, so this runs daily (and on code
+# changes) to pick up the weekly export. Publishing needs Pages turned on
+# (Settings -> Pages -> Source: GitHub Actions), which for a private repository
+# needs a paid plan; until this repository is public, only the build runs.
+# While open-stats-data is private, the build can only read it with a
+# fine-grained token (Contents: read, on open-stats-data only) in the
+# OPEN_STATS_DATA_TOKEN secret; delete it once the data repository is public.
+name: Page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "projects/**"
+      - "internal/**"
+      - "cmd/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/pages.yml"
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tkjaer/open-stats-data
+          ref: main
+          path: published
+          token: ${{ secrets.OPEN_STATS_DATA_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Checks every data file strictly; any problem fails the build and the
+      # previous page stays up. Nothing from published/ is run.
+      - run: go run ./cmd/open-stats site -data published/data -out _site
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.event.repository.visibility == 'public' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{.CSP}}">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>open-stats: visit counts</title>
+<style>{{.Style}}</style>
+</head>
+<body>
+<header>
+<h1>open-stats</h1>
+<p>Approximate page-load counts for a few small sites, published openly. Each page load sends one
+request with only the page language, and no cookie or ID. The server necessarily sees the visitor's IP
+address; it is used only in memory, for the country and the rate limit. What is collected, how and why:
+<a href="https://github.com/tkjaer/open-stats#readme">github.com/tkjaer/open-stats</a>.
+The numbers are approximate: reloads count, and visitors with Global Privacy Control, Do Not Track or an
+ad blocker aren't counted. Days are UTC.</p>
+<ul>
+{{- range .Projects}}
+<li><a href="#{{.Slug}}">{{.Name}}</a></li>
+{{- end}}
+</ul>
+</header>
+<main>
+{{- range $p := .Projects}}
+<section id="{{.Slug}}">
+<h2><a href="{{.URL}}">{{.Name}}</a></h2>
+{{- with .Settings}}
+<p class="meta">GoatCounter {{.Version}}; collects: {{.Collect}}; keeps data for {{.Retention}} days;
+dashboard {{.Public}}. Privacy notice: <a href="{{$p.Privacy}}">{{$p.Privacy}}</a></p>
+{{- end}}
+{{- if not .Weeks}}
+<p>No data published yet.</p>
+{{- else}}
+<h3>Page loads per day</h3>
+<p class="meta">{{.Range}} (UTC). Days without published data are empty.</p>
+{{template "chart" .PageLoads}}
+<h3>Language per day</h3>
+{{- if .Quiet}}
+<p class="meta">Days with too few page loads in total (the threshold is given for each week under
+“Countries per day”) are not broken down by language or country: only their total is published, shown here
+in grey.</p>
+{{- end}}
+{{template "chart" .Language}}
+<ul class="legend">
+{{- range .Legend}}
+<li><svg viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" fill="{{.Colour}}"/></svg> {{.Key}}</li>
+{{- end}}
+</ul>
+<h3>Weeks</h3>
+<p class="meta">Sums of the published daily numbers above.</p>
+<table>
+<thead><tr><th>Week</th><th>From</th><th>Page loads</th>{{range .LangKeys}}<th>{{.}}</th>{{end}}{{if .QuietCol}}<th>not broken down</th>{{end}}</tr></thead>
+<tbody>
+{{- range .Weeks}}
+<tr><th scope="row">{{.ID}}</th><td>{{.From}}</td><td>{{.PageLoads}}</td>{{range .Language}}<td>{{.}}</td>{{end}}{{if $p.QuietCol}}<td>{{.Quiet}}</td>{{end}}</tr>
+{{- end}}
+</tbody>
+</table>
+<h3>Countries per day</h3>
+<p class="meta">A country with too few page loads on a day is counted under “other” for that day, so a dash
+means “fewer than that, included in other”. A day with too few page loads in total isn't broken down at
+all. The thresholds are given for each week. There are deliberately no weekly totals per country: with
+them, the hidden days could be worked out.</p>
+{{- range .Countries}}
+<details{{if .Open}} open{{end}}><summary>{{.ID}}: {{.Span}}</summary>
+<p class="meta">Countries with fewer than {{.MinCount}} page loads on a day are under “other”; days with fewer
+than {{.MinDayTotal}} page loads in total are not broken down.</p>
+<div class="scroll"><table>
+<thead><tr><th>Day</th>{{range .Codes}}<th>{{.}}</th>{{end}}<th>other</th></tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr><th scope="row">{{.Label}}</th>{{if .Quiet}}<td colspan="{{.Span}}" class="quiet">{{.Total}} page loads: not broken down</td>{{else}}{{range .Cells}}<td>{{.}}</td>{{end}}<td>{{.Other}}</td>{{end}}</tr>
+{{- end}}
+</tbody>
+</table></div>
+</details>
+{{- end}}
+{{- end}}
+</section>
+{{- end}}
+</main>
+<footer>
+<p class="meta">Data: <a href="https://github.com/tkjaer/open-stats-data">CC0</a>.
+Code: <a href="https://github.com/tkjaer/open-stats">AGPL-3.0-or-later</a>.
+This page has no JavaScript, no cookies and no tracking. Built {{.Built}} UTC.</p>
+</footer>
+</body>
+</html>
+{{define "chart" -}}
+<svg viewBox="0 0 {{.W}} {{.H}}" role="img" aria-labelledby="{{.ID}}" xmlns="http://www.w3.org/2000/svg" font-size="11" font-family="system-ui, sans-serif">
+<title id="{{.ID}}">{{.Title}}</title>
+{{- range .Grid}}
+<line x1="{{.X1}}" x2="{{.X2}}" y1="{{.Y}}" y2="{{.Y}}" stroke="#ccc" stroke-width="0.5"/>
+<text x="{{.TextX}}" y="{{.TextY}}" text-anchor="end" fill="currentColor">{{.Label}}</text>
+{{- end}}
+{{- range .Bars}}
+<rect x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" fill="{{.Fill}}"><title>{{.Title}}</title></rect>
+{{- end}}
+{{- range .Labels}}
+<text x="{{.X}}" y="{{.Y}}" fill="currentColor">{{.Text}}</text>
+{{- end}}
+</svg>
+{{- end}}

@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; }
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+svg { width: 100%; height: auto; }
+table { border-collapse: collapse; margin: .5rem 0 1rem; font-variant-numeric: tabular-nums; }
+th, td { padding: .15rem .6rem; text-align: right; border-bottom: 1px solid #8884; }
+th:first-child { text-align: left; }
+.scroll { overflow-x: auto; }
+.meta { color: #777; font-size: .9rem; }
+.legend { list-style: none; padding: 0; display: flex; gap: 1rem; }
+.legend svg { width: 10px; height: 10px; }
+summary { cursor: pointer; }
+section { margin-top: 3rem; }
+td.quiet { text-align: left; color: #777; }
