@@ -269,3 +269,55 @@ func TestRunSettingsDrift(t *testing.T) {
 		}
 	}
 }
+
+// A failed run can leave changed and untracked files in the clone. They must
+// not block later runs, even when GitHub has since changed or added the
+// same files.
+func TestRunLeftovers(t *testing.T) {
+	calls := 0
+	srv := fakeGoatCounter(t, "Etc/UTC", &calls)
+	defer srv.Close()
+	ps, _ := project.LoadAll(projects.FS, "how-the-internet-works")
+	tmp, origin, clone := gitRepos(t)
+
+	weekly := "data/how-the-internet-works/weekly/2026-W40.json"
+	os.MkdirAll(filepath.Join(clone, filepath.Dir(weekly)), 0o755)
+	os.WriteFile(filepath.Join(clone, weekly), []byte("left over\n"), 0o644)
+	os.WriteFile(filepath.Join(clone, "README.md"), []byte("left over\n"), 0o644)
+
+	work := filepath.Join(tmp, "work")
+	run(t, "git", "clone", "--quiet", origin, work)
+	os.MkdirAll(filepath.Join(work, filepath.Dir(weekly)), 0o755)
+	os.WriteFile(filepath.Join(work, weekly), []byte("published\n"), 0o644)
+	os.WriteFile(filepath.Join(work, "README.md"), []byte("changed on GitHub\n"), 0o644)
+	run(t, "git", "-C", work, "add", ".")
+	run(t, "git", "-C", work, "-c", "user.name=x", "-c", "user.email=x@example.org", "commit", "--quiet", "-m", "remote")
+	run(t, "git", "-C", work, "push", "--quiet", "origin", "main")
+	head := run(t, "git", "--git-dir", origin, "rev-parse", "main")
+
+	api := goatcounter.NewAPI(srv.URL, "tok")
+	api.Pause = 0
+	var log strings.Builder
+	o := Options{Projects: ps, Repo: clone, Now: time.Date(2026, 10, 5, 3, 0, 0, 0, time.UTC), API: api, Log: &log}
+	if err := Run(o); err != nil {
+		t.Fatalf("Run: %v\n%s", err, &log)
+	}
+	if !strings.Contains(log.String(), "already published") {
+		t.Errorf("log: %s", &log)
+	}
+	// Only the settings file is new.
+	if got := run(t, "git", "--git-dir", origin, "rev-parse", "main~1"); got != head {
+		t.Errorf("origin is not one commit ahead of %s", head)
+	}
+	for file, want := range map[string]string{weekly: "published\n", "README.md": "changed on GitHub\n"} {
+		if got := run(t, "git", "--git-dir", origin, "show", "main:"+file); got != want {
+			t.Errorf("%s on origin: %q", file, got)
+		}
+		if got, _ := os.ReadFile(filepath.Join(clone, file)); string(got) != want {
+			t.Errorf("%s in the clone: %q", file, got)
+		}
+	}
+	if st := run(t, "git", "-C", clone, "status", "--porcelain"); st != "" {
+		t.Errorf("clone not clean: %q", st)
+	}
+}

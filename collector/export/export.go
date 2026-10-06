@@ -104,10 +104,11 @@ func git(repo string, args ...string) (string, error) {
 
 // prepare resets the clone to what's on GitHub: it only ever holds data
 // written here, and nothing local (e.g. from a failed run) may be pushed.
+// The checkout is forced so that leftovers can't block it.
 func prepare(repo, branch string) error {
 	for _, args := range [][]string{
 		{"fetch", "--quiet", "origin", branch},
-		{"checkout", "--quiet", "-B", branch, "origin/" + branch},
+		{"checkout", "--quiet", "--force", "-B", branch, "origin/" + branch},
 		{"reset", "--quiet", "--hard", "origin/" + branch},
 		{"clean", "--quiet", "-fdx"},
 	} {
