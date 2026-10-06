@@ -130,7 +130,7 @@ func TestRun(t *testing.T) {
 	}
 
 	data := []byte(run(t, "git", "--git-dir", origin, "show", "main:data/how-the-internet-works/weekly/2026-W40.json"))
-	w, err := dataformat.ParseWeek(data, "how-the-internet-works", "2026-W40")
+	w, err := dataformat.ParseWeek(data, ps[0], "2026-W40")
 	if err != nil {
 		t.Fatal(err)
 	}

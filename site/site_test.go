@@ -375,3 +375,45 @@ func TestQuietDaysAndThresholdsPerWeek(t *testing.T) {
 		t.Error("the language chart breaks down a quiet day")
 	}
 }
+
+// A file that is consistent with itself but declares thresholds below the
+// project's (here 1 and 1, with a one-load day broken down as en 1 and DK 1)
+// is rejected: the thresholds come from projects/*.yml, not from the file.
+func TestRejectsLowerThresholds(t *testing.T) {
+	lax := *hiw(t)[0]
+	lax.Publish.CountryMinPerDay, lax.Publish.BreakdownMinDayTotal = 1, 1
+	days, _ := isoweek.Days("2026-W40")
+	raw := dataformat.Raw{Totals: map[string]int{}, Paths: map[string]map[string]int{}, Countries: map[string]map[string]int{}}
+	for _, d := range days {
+		raw.Totals[d.Format(time.DateOnly)] = 0
+	}
+	raw.Totals["2026-09-28"] = 1
+	raw.Paths["2026-09-28"] = map[string]int{"/en": 1}
+	raw.Countries["2026-09-28"] = map[string]int{"DK": 1}
+	w, err := dataformat.Build(&lax, "2026-W40", raw, time.Date(2026, 10, 5, 3, 0, 0, 0, time.UTC), dataformat.Source{
+		Collector: "goatcounter", GoatCounterVersion: "v2.7.0", Collect: []string{"country"}, DataRetentionDays: 31})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := dataformat.Marshal(w)
+	if !strings.Contains(string(data), `"DK": 1`) || !strings.Contains(string(data), `"en": 1`) {
+		t.Fatalf("fixture doesn't break down the one-load day:\n%s", data)
+	}
+	if _, err := dataformat.ParseWeek(data, &lax, "2026-W40"); err != nil {
+		t.Fatalf("fixture isn't consistent with its own thresholds: %v", err)
+	}
+	f := newFixture(t)
+	f.put("2026-W40.json", data)
+	if _, err := f.build(); err == nil || !strings.Contains(err.Error(), "must be at least the project's 5 and 20") {
+		t.Errorf("thresholds 1 and 1 against the project's 5 and 20: got %v", err)
+	}
+	for _, c := range []struct{ min, quiet int }{{1, 20}, {5, 19}} {
+		p := *hiw(t)[0]
+		p.Publish.CountryMinPerDay, p.Publish.BreakdownMinDayTotal = c.min, c.quiet
+		f := newFixture(t)
+		f.put("2026-W40.json", weekJSONFor(t, &p, "2026-W40"))
+		if _, err := f.build(); err == nil {
+			t.Errorf("min_count %d, min_day_total %d: accepted", c.min, c.quiet)
+		}
+	}
+}

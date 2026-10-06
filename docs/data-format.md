@@ -129,8 +129,10 @@ number that leaves out the other days, so it is not that country's total.
 - All counts are integers from 0 to 1,000,000,000.
 - The page is built with strict checks: a file with an unknown or missing
   key, a wrong type, a day that doesn't add up, a country under `min_count`, a
-  breakdown for a quiet day (or none for a day that isn't one) or anything
-  else unexpected stops the build. The rules are in
+  breakdown for a quiet day (or none for a day that isn't one), a
+  `min_count` or `min_day_total` below the project's own in
+  [`projects/<name>.yml`](../projects/) (stricter is fine) or anything else
+  unexpected stops the build. The rules are in
   [`internal/dataformat`](../internal/dataformat/dataformat.go).
 
 ### Changes

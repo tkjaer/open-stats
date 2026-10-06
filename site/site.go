@@ -97,7 +97,7 @@ func Load(dataDir string, ps []*project.Project) ([]Project, error) {
 			if err != nil {
 				return nil, err
 			}
-			w, err := dataformat.ParseWeek(data, p.Slug, m[1])
+			w, err := dataformat.ParseWeek(data, p, m[1])
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", path, err)
 			}

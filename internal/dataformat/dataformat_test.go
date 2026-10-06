@@ -141,7 +141,7 @@ func TestBuild(t *testing.T) {
 			t.Errorf("%s: granularity %v", name, tbl["granularity"])
 		}
 	}
-	if _, err := ParseWeek(Marshal(w), "how-the-internet-works", "2026-W40"); err != nil {
+	if _, err := ParseWeek(Marshal(w), hiw(t), "2026-W40"); err != nil {
 		t.Errorf("the exporter's own output doesn't pass the site's checks: %v", err)
 	}
 }
@@ -221,11 +221,11 @@ func TestParseWeekRejects(t *testing.T) {
 		"min_count 0":          edit(func(m map[string]any) { tables(m, "country")["min_count"] = 0 }),
 	}
 	for name, data := range tests {
-		if _, err := ParseWeek([]byte(data), "how-the-internet-works", "2026-W40"); err == nil {
+		if _, err := ParseWeek([]byte(data), hiw(t), "2026-W40"); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := ParseWeek([]byte(good), "how-the-internet-works", "2026-W41"); err == nil {
+	if _, err := ParseWeek([]byte(good), hiw(t), "2026-W41"); err == nil {
 		t.Error("file name / period mismatch: accepted")
 	}
 }
@@ -309,7 +309,7 @@ func TestQuietDays(t *testing.T) {
 		t.Errorf("language and country rows for %v, want only the days with at least 20 page loads", got)
 	}
 	data := Marshal(w)
-	if _, err := ParseWeek(data, "how-the-internet-works", "2026-W40"); err != nil {
+	if _, err := ParseWeek(data, hiw(t), "2026-W40"); err != nil {
 		t.Error(err)
 	}
 	if strings.Contains(string(data), `"day": "2026-09-28",

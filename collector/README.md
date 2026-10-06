@@ -302,7 +302,9 @@ runs on that origin. That only holds while these stay true:
   Selected branches: `main`*). The workflow checks this too.
 - **The page build treats every data file as untrusted.** It reads only
   `data/<project>/weekly/*.json` and `goatcounter-settings.json`, checks them
-  strictly and escapes everything.
+  strictly (including that a file's thresholds are no lower than the
+  project's in `projects/*.yml`, so a file can't publish smaller numbers by
+  declaring smaller thresholds) and escapes everything.
 
 Create a deploy key that can only write to `open-stats-data`:
 

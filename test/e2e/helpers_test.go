@@ -21,6 +21,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tkjaer/open-stats/internal/project"
+	"github.com/tkjaer/open-stats/projects"
 )
 
 const (
@@ -376,4 +379,13 @@ func tempToken(t *testing.T, name string, perms int) (string, func()) {
 	gcExec(t, fmt.Sprintf("insert into api_tokens (site_id, user_id, name, token, permissions, created_at, sites) values "+
 		"(%d, %d, '%s', '%s', '%d', strftime('%%Y-%%m-%%d %%H:%%M:%%S', 'now'), '[%d]')", root, user, name, token, perms, root))
 	return token, func() { gcExec(t, "delete from api_tokens where token = '"+token+"'") }
+}
+
+func hiwProject(t *testing.T) *project.Project {
+	t.Helper()
+	ps, err := project.LoadAll(projects.FS, "how-the-internet-works")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ps[0]
 }

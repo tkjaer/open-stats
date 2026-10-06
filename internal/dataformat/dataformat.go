@@ -296,8 +296,11 @@ func checkCounts(counts map[string]int, where string, key *regexp.Regexp) (int, 
 	return sum, nil
 }
 
-// ParseWeek reads and checks data/<slug>/weekly/<id>.json.
-func ParseWeek(data []byte, slug, id string) (*Week, error) {
+// ParseWeek reads and checks data/<slug>/weekly/<id>.json for project p. The
+// file's thresholds may be stricter than p's, never looser: they are checked
+// against p (trusted, built in), not only against the file's own declarations.
+func ParseWeek(data []byte, p *project.Project, id string) (*Week, error) {
+	slug := p.Slug
 	var w Week
 	if err := strictDecode(data, &w); err != nil {
 		return nil, err
@@ -336,6 +339,10 @@ func ParseWeek(data []byte, slug, id string) (*Week, error) {
 	quiet := t.Language.MinDayTotal
 	if quiet < t.Country.MinCount || quiet > maxCount || t.Country.MinDayTotal != quiet {
 		return nil, fmt.Errorf("min_day_total must be the same in both tables and at least min_count")
+	}
+	if t.Country.MinCount < p.Publish.CountryMinPerDay || quiet < p.Publish.BreakdownMinDayTotal {
+		return nil, fmt.Errorf("min_count %d and min_day_total %d must be at least the project's %d and %d",
+			t.Country.MinCount, quiet, p.Publish.CountryMinPerDay, p.Publish.BreakdownMinDayTotal)
 	}
 	if len(t.PageLoads.Rows) != 7 {
 		return nil, fmt.Errorf("page_loads needs 7 daily rows")

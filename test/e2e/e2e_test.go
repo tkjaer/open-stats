@@ -601,7 +601,7 @@ func testExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := dataformat.ParseWeek(data, "how-the-internet-works", week)
+	doc, err := dataformat.ParseWeek(data, hiwProject(t), week)
 	if !check(t, err == nil, "the exported file passes the site's strict checks (%v)", err) {
 		t.FailNow()
 	}
@@ -697,7 +697,7 @@ func testExport(t *testing.T) {
 	t.Log(indent(res))
 	check(t, err == nil, "first run succeeded (%v)", err)
 	check(t, originLog()[0] == "data: "+week, "pushed commit 'data: %s' (log: %v)", week, originLog())
-	pushed, err := dataformat.ParseWeek([]byte(originFile("data/how-the-internet-works/weekly/"+week+".json")), "how-the-internet-works", week)
+	pushed, err := dataformat.ParseWeek([]byte(originFile("data/how-the-internet-works/weekly/"+week+".json")), hiwProject(t), week)
 	check(t, err == nil && reflect.DeepEqual(pushed.Tables, doc.Tables), "pushed file has the same tables as with -out (%v)", err)
 	check(t, originFile("data/how-the-internet-works/goatcounter-settings.json") == string(settings), "settings snapshot pushed")
 	check(t, !strings.Contains(run(t, "git", "--git-dir", origin, "ls-tree", "-r", "--name-only", "main"), "demo"),
