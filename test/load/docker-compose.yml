@@ -1,0 +1,15 @@
+# Load measurement only (test/load/run.sh), on top of test/docker-compose.yml:
+# the server stand-in gets one CPU, and a second container sends the load.
+services:
+  vps:
+    cpuset: "0"
+    cpus: 1
+    mem_limit: 540m
+    # To give GoatCounter its own cgroup with the unit's memory limits.
+    privileged: true
+  load:
+    image: debian:bookworm-slim
+    volumes:
+      - ..:/repo:ro
+    command: ["sleep", "infinity"]
+    init: true

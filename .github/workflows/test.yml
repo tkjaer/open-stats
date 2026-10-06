@@ -25,7 +25,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: shellcheck
-        run: shellcheck -x collector/*.sh test/run.sh test/vps/entrypoint.sh test/vps/gcctl
+        run: shellcheck -x collector/*.sh test/run.sh test/vps/entrypoint.sh test/vps/gcctl test/load/*.sh
       - name: tests
         run: test/run.sh
       - name: reproducible build
