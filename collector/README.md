@@ -423,8 +423,8 @@ machine by themselves; for Safari, add `127.0.0.1 how-the-internet-works.localho
 
 ## Adding a project
 
-1. In this repository: add `projects/<name>.yml` and one line to the
-   allow-list `map` at the top of `nginx/stats.irq.dk.conf`. `go test ./...`
+1. In this repository: add `projects/<name>.yml` and one line (its path) to
+   the allow-list `map` at the top of `nginx/stats.irq.dk.conf`. `go test ./...`
    checks that they agree.
 2. Build and install the new binary (step 3) and nginx file (step 6), then
    `nginx -t && systemctl reload nginx`.
@@ -432,6 +432,18 @@ machine by themselves; for Safari, add `127.0.0.1 how-the-internet-works.localho
    first site (same login), and extends the export token to cover it.
 
 The next export includes the new project.
+
+### Adding a language
+
+nginx already forwards every two-letter lowercase code, and GoatCounter
+counts each under its own path (`/fr`), so nothing changes on the server's
+nginx or GoatCounter. A code only gets its own published column once it is in
+`publish.languages` in `projects/<name>.yml`; until then it only adds to
+`other`. To give it a column, add it there, then build and install the new
+binary (step 3). The next export publishes it; weeks published before keep
+it in `other`, and the page shows "–" for them. Don't remove a language
+from the list once a week with it is published: the page would then reject
+that week.
 
 ## Upgrading
 

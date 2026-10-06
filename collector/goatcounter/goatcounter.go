@@ -234,8 +234,11 @@ type dayStat struct {
 	Daily int    `json:"daily"`
 }
 
-// Week reads the raw daily numbers of one week from GoatCounter.
-func (a *API) Week(host string, days []isoweek.Day) (dataformat.Raw, error) {
+// Week reads the raw daily numbers of one week from GoatCounter. It asks only
+// for the paths of the given languages ("/<code>"): the other codes' own counts
+// are never read, and dataformat puts them under "other" by subtracting from
+// the day's total.
+func (a *API) Week(host string, languages []string, days []isoweek.Day) (dataformat.Raw, error) {
 	raw := dataformat.Raw{Totals: map[string]int{}, Paths: map[string]map[string]int{},
 		Countries: map[string]map[string]int{}}
 	inWeek := map[string]bool{}
@@ -266,6 +269,16 @@ func (a *API) Week(host string, days []isoweek.Day) (dataformat.Raw, error) {
 	p := span(days[0], days[6])
 	p.Set("daily", "true")
 	p.Set("limit", "100")
+	wanted := map[string]bool{}
+	var paths []string
+	for _, l := range languages {
+		wanted["/"+l] = true
+		paths = append(paths, "/"+l)
+	}
+	// With path_by_name, GoatCounter matches lower(path) against this list,
+	// and returns nothing (not everything) if none of them exist yet.
+	p.Set("path_by_name", "true")
+	p.Set("include_paths", strings.Join(paths, ","))
 	var hits struct {
 		More bool `json:"more"`
 		Hits []struct {
@@ -277,9 +290,12 @@ func (a *API) Week(host string, days []isoweek.Day) (dataformat.Raw, error) {
 		return raw, err
 	}
 	if hits.More {
-		return raw, fmt.Errorf("%s has more than 100 paths; expected only the allow-listed ones", host)
+		return raw, fmt.Errorf("%s: more than 100 paths for %d languages", host, len(languages))
 	}
 	for _, h := range hits.Hits {
+		if !wanted[h.Path] {
+			return raw, fmt.Errorf("%s: GoatCounter returned path %q, which was not asked for", host, h.Path)
+		}
 		for _, s := range h.Stats {
 			if inWeek[s.Day] {
 				raw.Paths[s.Day][h.Path] += s.Daily

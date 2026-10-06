@@ -54,6 +54,9 @@ func fakeGoatCounterSettings(t *testing.T, tz, settings string, calls *int) *htt
 			io.WriteString(w, `{"total":25,"stats":[{"day":"2026-09-27","daily":99},
 				{"day":"2026-09-28","daily":20},{"day":"2026-10-01","daily":5}]}`)
 		case "/api/v0/stats/hits":
+			if q.Get("path_by_name") != "true" || q.Get("include_paths") != "/en,/da,/de" {
+				t.Errorf("hits: %v", q)
+			}
 			io.WriteString(w, `{"more":false,"hits":[
 				{"path":"/en","stats":[{"day":"2026-09-28","daily":15},{"day":"2026-10-01","daily":5}]},
 				{"path":"/da","stats":[{"day":"2026-09-28","daily":5}]}]}`)
@@ -140,7 +143,7 @@ func TestRun(t *testing.T) {
 	got, _ := json.Marshal(w.Tables)
 	for _, want := range []string{
 		`{"day":"2026-09-28","count":20}`, `{"day":"2026-10-01","count":5}`,
-		`{"day":"2026-09-28","counts":{"da":5,"en":15,"other":0}}`,
+		`{"day":"2026-09-28","counts":{"da":5,"de":0,"en":15,"other":0}}`,
 		`{"day":"2026-09-28","counts":{"DE":10,"DK":5,"other":5}}`,
 	} {
 		if !strings.Contains(string(got), want) {

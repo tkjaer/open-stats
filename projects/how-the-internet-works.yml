@@ -4,7 +4,8 @@
 # the open-stats binary, which is installed on the VPS by hand (see
 # collector/README.md). Keep the nginx allow-list in
 # collector/nginx/stats.irq.dk.conf in sync; `go test ./...` checks that they
-# match.
+# match. Adding a language to publish.languages needs a new binary but no
+# nginx change.
 
 slug: how-the-internet-works
 name: How the Internet Works
@@ -13,13 +14,14 @@ source: https://github.com/tkjaer/how-the-internet-works
 privacy: https://github.com/tkjaer/how-the-internet-works/blob/main/docs/privacy.md
 
 # The one request a visitor's browser sends, once per page load:
-#   GET https://stats.irq.dk/how-the-internet-works/count?lang=<value>
-# Anything else (other values, other parameters, other paths or methods)
-# gets 204 from nginx and is never forwarded.
+#   GET https://stats.irq.dk/how-the-internet-works/count?lang=<code>
+# where <code> is the page's language as two lowercase letters (en, da, de,
+# ...). Anything else (other values, other parameters, other paths or
+# methods) gets 204 from nginx and is never forwarded.
 request:
   path: /how-the-internet-works/count
   parameter: lang   # always lang: nginx only handles this name
-  allowed: [en, da]
+  values: two-letter-code   # exactly [a-z]{2}: the only kind nginx handles
 
 # GoatCounter site that stores this project's counts (one site per project).
 goatcounter:
@@ -42,3 +44,6 @@ publish:
   # A country with fewer page loads than this on a day is counted under
   # "other" for that day. No weekly country numbers are published.
   country_min_per_day: 5
+  # Languages with their own column. Every other code that was counted is
+  # published only as part of "other"; the export never reads its own count.
+  languages: [en, da, de]

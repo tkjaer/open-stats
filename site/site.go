@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -148,16 +147,16 @@ type (
 	weekRow struct {
 		ID, From  string
 		PageLoads int
-		Language  []int
-		Quiet     int // page loads on days that are not broken down
+		Language  []string // per LangKeys; "–" for a language the week has no column for
+		Quiet     int      // page loads on days that are not broken down
 	}
 	dailyRow struct {
 		Date, Label string
 		None        bool // no data published for this day
 		Quiet       bool // only PageLoads is published
 		PageLoads   int
-		Language    []int // per LangKeys
-		Span        int   // language columns, for None and Quiet
+		Language    []string // per LangKeys; "–" for a language the day has no column for
+		Span        int      // language columns, for None and Quiet
 	}
 	legendItem  struct{ Key, Colour string }
 	countryWeek struct {
@@ -318,15 +317,9 @@ func view(p Project) projectView {
 		"Bar chart. The same numbers are in the table “Daily numbers” after the language chart.", days,
 		[]series{{"page loads", palette[0], pageLoads}})
 
-	keys := slices.Clone(p.Request.Allowed)
-	var extra []string
-	for k := range seen {
-		if k != dataformat.Other && !slices.Contains(keys, k) {
-			extra = append(extra, k)
-		}
-	}
-	sort.Strings(extra)
-	keys = append(keys, extra...)
+	// ParseWeek has checked that every key is one of the project's languages
+	// or "other".
+	keys := slices.Clone(p.Publish.Languages)
 	if seen[dataformat.Other] {
 		keys = append(keys, dataformat.Other)
 	}
@@ -366,7 +359,7 @@ func view(p Project) projectView {
 		default:
 			r.PageLoads = n
 			for _, k := range keys {
-				r.Language = append(r.Language, lang[k])
+				r.Language = append(r.Language, cell(lang, k))
 			}
 		}
 		v.Daily = append(v.Daily, r)
@@ -383,11 +376,17 @@ func view(p Project) projectView {
 			}
 		}
 		for _, k := range keys {
-			sum := 0
+			sum, missing := 0, false
 			for _, r := range w.Tables.Language.Rows {
-				sum += r.Counts[k]
+				n, ok := r.Counts[k]
+				sum, missing = sum+n, missing || !ok
 			}
-			row.Language = append(row.Language, sum)
+			if missing {
+				// Published before k had its own column: its page loads are in "other".
+				row.Language = append(row.Language, "–")
+			} else {
+				row.Language = append(row.Language, strconv.Itoa(sum))
+			}
 		}
 		v.QuietCol = v.QuietCol || row.Quiet > 0
 		v.Weeks = append(v.Weeks, row)
@@ -475,4 +474,13 @@ func Build(dataDir, outDir string, ps []*project.Project, now time.Time) (string
 		weeks += len(p.Weeks)
 	}
 	return fmt.Sprintf("wrote %s (%d project(s), %d week(s))", out, len(loaded), weeks), nil
+}
+
+// cell is counts[k] for a table, or "–" if counts has no such key (a week
+// published before k had its own column).
+func cell(counts map[string]int, k string) string {
+	if n, ok := counts[k]; ok {
+		return strconv.Itoa(n)
+	}
+	return "–"
 }

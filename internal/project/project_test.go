@@ -41,10 +41,14 @@ func TestBadProjects(t *testing.T) {
 	}
 	tests := map[string][2]string{
 		"slug mismatch":   {"slug: how-the-internet-works", "slug: other"},
-		"bad value":       {"[en, da]", `[en, "d'a"]`},
-		"reserved value":  {"[en, da]", "[en, other]"},
-		"duplicate":       {"[en, da]", "[en, en]"},
-		"empty":           {"[en, da]", "[]"},
+		"bad language":    {"[en, da, de]", `[en, "d'a"]`},
+		"long language":   {"[en, da, de]", "[en, deu]"},
+		"upper language":  {"[en, da, de]", "[en, DA]"},
+		"other language":  {"[en, da, de]", "[en, other]"},
+		"duplicate":       {"[en, da, de]", "[en, en]"},
+		"no languages":    {"[en, da, de]", "[]"},
+		"other values":    {"values: two-letter-code", "values: any"},
+		"missing values":  {"values: two-letter-code", ""},
 		"bad vhost":       {"vhost: how-the-internet-works.localhost", `vhost: "x'; drop table sites; --"`},
 		"missing min":     {"country_min_per_day: 5", ""},
 		"zero min":        {"country_min_per_day: 5", "country_min_per_day: 0"},
@@ -80,8 +84,7 @@ func TestNginxAllowList(t *testing.T) {
 	}
 	var want []string
 	for _, p := range ps {
-		want = append(want, `"~^GET `+p.Request.Path+`\?`+p.Request.Parameter+`=(?:`+
-			strings.Join(p.Request.Allowed, "|")+`)$" `+p.GoatCounter.VHost+`;`)
+		want = append(want, `"~^GET `+p.Request.Path+`\?`+p.Request.Parameter+`=[a-z]{2}$" `+p.GoatCounter.VHost+`;`)
 	}
 	lines := mapBlock(t, string(conf), "openstats_site")
 	got := slices.DeleteFunc(lines, func(l string) bool { return strings.HasPrefix(l, "default ") })
@@ -101,36 +104,58 @@ func TestNginxAllowList(t *testing.T) {
 		}
 		return ""
 	}
+	const hiw = "how-the-internet-works.localhost"
 	for s, want := range map[string]string{
-		"GET /how-the-internet-works/count?lang=en":     "how-the-internet-works.localhost",
-		"GET /how-the-internet-works/count?lang=da":     "how-the-internet-works.localhost",
-		"GET /how-the-internet-works/count?lang=fr":     "",
-		"POST /how-the-internet-works/count?lang=en":    "",
-		"GET /how-the-internet-works/count?lang=en&x":   "",
-		"GET /how-the-internet-works/countXlang=en":     "",
-		"GET //how-the-internet-works/count?lang=en":    "",
-		"XGET /how-the-internet-works/count?lang=en":    "",
-		"GET /how-the-internet-works/count?lang=enn":    "",
-		"GET /how-the-internet-works/count?lang=%65n":   "",
-		"GET /how-the-internet-works/count/?lang=en":    "",
-		"GET /HIW/count?lang=en":                        "",
-		"GET /how-the-internet-works/count?x=1&lang=en": "",
+		"GET /how-the-internet-works/count?lang=en":                          hiw,
+		"GET /how-the-internet-works/count?lang=da":                          hiw,
+		"GET /how-the-internet-works/count?lang=de":                          hiw,
+		"GET /how-the-internet-works/count?lang=fr":                          hiw, // counted, published under "other"
+		"GET /how-the-internet-works/count?lang=zz":                          hiw,
+		"GET /how-the-internet-works/count?lang=deu":                         "",
+		"GET /how-the-internet-works/count?lang=EN":                          "",
+		"GET /how-the-internet-works/count?lang=En":                          "",
+		"GET /how-the-internet-works/count?lang=e1":                          "",
+		"GET /how-the-internet-works/count?lang=e":                           "",
+		"GET /how-the-internet-works/count?lang=":                            "",
+		"GET /how-the-internet-works/count?lang":                             "",
+		"GET /how-the-internet-works/count":                                  "",
+		"GET /how-the-internet-works/count?lang=en-GB":                       "",
+		"GET /how-the-internet-works/count?lang=en_GB":                       "",
+		"GET /how-the-internet-works/count?lang=e-":                          "",
+		"GET /how-the-internet-works/count?lang=" + strings.Repeat("a", 300): "",
+		"GET /how-the-internet-works/count?lang=en%0A":                       "",
+		"GET /how-the-internet-works/count?lang=en\n":                        "",
+		"POST /how-the-internet-works/count?lang=en":                         "",
+		"GET /how-the-internet-works/count?lang=en&x":                        "",
+		"GET /how-the-internet-works/countXlang=en":                          "",
+		"GET //how-the-internet-works/count?lang=en":                         "",
+		"XGET /how-the-internet-works/count?lang=en":                         "",
+		"GET /how-the-internet-works/count?lang=enn":                         "",
+		"GET /how-the-internet-works/count?lang=%65n":                        "",
+		"GET /how-the-internet-works/count/?lang=en":                         "",
+		"GET /HIW/count?lang=en":                                             "",
+		"GET /how-the-internet-works/count?x=1&lang=en":                      "",
 	} {
 		if got := site(s); got != want {
 			t.Errorf("%q: got %q, want %q", s, got, want)
 		}
 	}
 
-	// Every allowed request of every project is translated to GoatCounter's
-	// /count?p=/<value>.
+	// Every request a project accepts is translated to GoatCounter's
+	// /count?p=/<code>, and nothing else is.
 	up := mapBlock(t, string(conf), "openstats_upstream_uri")
 	m := regexp.MustCompile(`^"~(.*)"\s+"(.*)";$`).FindStringSubmatch(up[1])
 	re, repl := regexp.MustCompile(m[1]), strings.ReplaceAll(m[2], "$1", "${1}")
 	for _, p := range ps {
-		for _, v := range p.Request.Allowed {
+		for _, v := range append([]string{"fr", "zz"}, p.Publish.Languages...) {
 			req := "GET " + p.Request.Path + "?" + p.Request.Parameter + "=" + v
 			if got := re.ReplaceAllString(req, repl); !re.MatchString(req) || got != "/count?p=/"+v {
 				t.Errorf("upstream URI for %q: %q", req, got)
+			}
+		}
+		for _, v := range []string{"deu", "EN", "e1", "", "en-GB"} {
+			if req := "GET " + p.Request.Path + "?" + p.Request.Parameter + "=" + v; re.MatchString(req) {
+				t.Errorf("upstream URI for %q: matched", req)
 			}
 		}
 	}

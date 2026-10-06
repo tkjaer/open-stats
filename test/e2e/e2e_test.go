@@ -114,6 +114,8 @@ func testForwarding(t *testing.T) {
 		{"/how-the-internet-works/count?lang=da", "203.0.113.6", "127.0.0.1", nil, "/count?p=/da"},
 		{"/how-the-internet-works/count?lang=en", "203.0.113.7", "127.0.0.1", spoof, "/count?p=/en"},
 		{"/how-the-internet-works/count?lang=da", "", "::1", nil, "/count?p=/da"},
+		{"/how-the-internet-works/count?lang=de", "203.0.113.8", "127.0.0.1", nil, "/count?p=/de"},
+		{"/how-the-internet-works/count?lang=fr", "203.0.113.9", "127.0.0.1", nil, "/count?p=/fr"},
 	} {
 		r := send(t, req{target: c.target, ip: c.ip, addr: c.addr, headers: c.extra})
 		got := cap.take(400 * time.Millisecond)
@@ -148,7 +150,8 @@ func testForwarding(t *testing.T) {
 
 	t.Log("-- everything else is answered with an empty 204 and dropped")
 	for _, target := range []string{
-		"/how-the-internet-works/count?lang=fr", "/how-the-internet-works/count?lang=EN", "/how-the-internet-works/count?lang=En", "/how-the-internet-works/count?lang=en&x=1",
+		"/how-the-internet-works/count?lang=deu", "/how-the-internet-works/count?lang=e", "/how-the-internet-works/count?lang=e1",
+		"/how-the-internet-works/count?lang=en-GB", "/how-the-internet-works/count?lang=en_GB", "/how-the-internet-works/count?lang=EN", "/how-the-internet-works/count?lang=En", "/how-the-internet-works/count?lang=en&x=1",
 		"/how-the-internet-works/count?x=1&lang=en", "/how-the-internet-works/count?lang=da&lang=en", "/how-the-internet-works/count?lang=en&",
 		"/how-the-internet-works/count?lang=en%00", "/how-the-internet-works/count?lang=%65n", "/how-the-internet-works/count?lang=en%0d%0aX-Real-IP:%201.1.1.1",
 		"/how-the-internet-works/count?lang=", "/how-the-internet-works/count?lang", "/how-the-internet-works/count?", "/how-the-internet-works/count", "/how-the-internet-works/count/?lang=en",
@@ -322,6 +325,7 @@ func testCounting(t *testing.T) {
 		extra    [][2]string
 	}{
 		{"en", "8.8.8.8", nil}, {"en", "8.8.8.8", nil}, {"da", "193.0.6.139", nil},
+		{"de", "8.8.8.8", nil}, {"fr", "8.8.8.8", nil},
 		{"en", "130.225.0.1", [][2]string{{"X-Forwarded-For", "8.8.8.8"}, {"X-Real-IP", "8.8.8.8"}, {"Cf-Connecting-Ip", "8.8.8.8"}}},
 	} {
 		r := send(t, req{target: "/how-the-internet-works/count?lang=" + c.lang, ip: c.ip, headers: c.extra})
@@ -331,7 +335,7 @@ func testCounting(t *testing.T) {
 		// race to add that country (locations.go, Lookup), so space them out.
 		time.Sleep(300 * time.Millisecond)
 	}
-	for _, target := range []string{"/how-the-internet-works/count?lang=fr", "/how-the-internet-works/count?lang=en&x=1", "/demo/count?lang=en", "/how-the-internet-works/count/?lang=en"} {
+	for _, target := range []string{"/how-the-internet-works/count?lang=deu", "/how-the-internet-works/count?lang=en-GB", "/how-the-internet-works/count?lang=en&x=1", "/demo/count?lang=en", "/how-the-internet-works/count/?lang=en"} {
 		send(t, req{target: target, ip: "8.8.4.4"})
 	}
 	send(t, req{ip: "8.8.4.4", headers: [][2]string{{"Sec-GPC", "1"}}})
@@ -341,24 +345,24 @@ func testCounting(t *testing.T) {
 	var total map[string]any
 	waitFor(t, "GoatCounter to store the hits", func() bool {
 		total = mustAPI(t, "GET", "how-the-internet-works.localhost", "/api/v0/stats/total?"+q, exportToken, nil)
-		return num(total["total"]) >= 4
+		return num(total["total"]) >= 6
 	})
-	check(t, num(total["total"]) == 4, "4 page loads counted today (got %v)", total["total"])
+	check(t, num(total["total"]) == 6, "6 page loads counted today (got %v)", total["total"])
 	hits := mustAPI(t, "GET", "how-the-internet-works.localhost", "/api/v0/stats/hits?"+q+"&daily=true", exportToken, nil)
 	paths := map[string]int{}
 	for _, h := range hits["hits"].([]any) {
 		h := h.(map[string]any)
 		paths[h["path"].(string)] = num(h["count"])
 	}
-	check(t, reflect.DeepEqual(paths, map[string]int{"/en": 3, "/da": 1}), "paths /en 3, /da 1 (got %v)", paths)
+	check(t, reflect.DeepEqual(paths, map[string]int{"/en": 3, "/da": 1, "/de": 1, "/fr": 1}), "paths /en 3, /da 1, /de 1, /fr 1 (got %v)", paths)
 	locs := mustAPI(t, "GET", "how-the-internet-works.localhost", "/api/v0/stats/locations?"+q, exportToken, nil)
 	countries := map[string]int{}
 	for _, s := range locs["stats"].([]any) {
 		s := s.(map[string]any)
 		countries[s["id"].(string)] = num(s["count"])
 	}
-	check(t, reflect.DeepEqual(countries, map[string]int{"US": 2, "NL": 1, "DK": 1}),
-		"countries from the client IP, spoofed headers ignored: US 2, NL 1, DK 1 (got %v)", countries)
+	check(t, reflect.DeepEqual(countries, map[string]int{"US": 4, "NL": 1, "DK": 1}),
+		"countries from the client IP, spoofed headers ignored: US 4, NL 1, DK 1 (got %v)", countries)
 	demo := mustAPI(t, "GET", "demo.localhost", "/api/v0/stats/total?"+q, exportToken, nil)
 	check(t, num(demo["total"]) == 0, "nothing counted for the demo project (not in nginx's allow-list): %v", demo["total"])
 
@@ -369,7 +373,7 @@ func testCounting(t *testing.T) {
 	for _, r := range gcQuery(t, "select path from paths order by path") {
 		all = append(all, r["path"].(string))
 	}
-	check(t, reflect.DeepEqual(all, []string{"/da", "/en"}), "only /da and /en were ever recorded (paths: %v)", all)
+	check(t, reflect.DeepEqual(all, []string{"/da", "/de", "/en", "/fr"}), "only the two-letter codes sent were ever recorded (paths: %v)", all)
 	gcctl(t, "stop") // flush everything to disk
 	var blob []byte
 	entries, _ := os.ReadDir("/var/lib/goatcounter")
@@ -537,16 +541,17 @@ func seed(t *testing.T) (string, []time.Time, dataformat.Tables) {
 	// Thu (19): FR 18 + 1.                               -> total only
 	add(d[3], "/en", "FR", 18, "12:00:00")
 	add(d[3], "/da", "FR", 1, "12:00:00")
-	// Fri (21): DE 9, FR 8 (en 4 + da 4), NO 4.          -> DE 9, FR 8, other 4
-	add(d[4], "/en", "DE", 9, "12:00:00")
+	// Fri (21): DE 9 (in German), FR 8 (en 4 + da 4), NO 4. -> DE 9, FR 8, other 4
+	add(d[4], "/de", "DE", 9, "12:00:00")
 	add(d[4], "/en", "FR", 4, "12:00:00")
 	add(d[4], "/da", "FR", 4, "12:00:00")
 	add(d[4], "/en", "NO", 4, "12:00:00")
-	// Sat (20): DK 17, US 2, plus a path outside the allow-list (only possible
-	// if nginx were misconfigured): language "other".   -> DK 17, other 3
-	add(d[5], "/en", "DK", 17, "12:00:00")
-	add(d[5], "/en", "US", 2, "12:00:00")
-	add(d[5], "/xx", "US", 1, "12:00:00")
+	// Sat (20): DK 17 (en 15, it 2), US 3 (en 1, fr 2). Codes without their
+	// own column count only towards "other".             -> DK 17, other 3
+	add(d[5], "/en", "DK", 15, "12:00:00")
+	add(d[5], "/it", "DK", 2, "12:00:00")
+	add(d[5], "/en", "US", 1, "12:00:00")
+	add(d[5], "/fr", "US", 2, "12:00:00")
 	// Sun (1): DK at 23:59:30, plus hits just outside the week on both sides.
 	add(d[6], "/en", "DK", 1, "23:59:30")
 	add(d[0].AddDate(0, 0, -1), "/en", "DK", 3, "23:59:59")
@@ -560,7 +565,7 @@ func seed(t *testing.T) (string, []time.Time, dataformat.Tables) {
 	day := func(i int) string { return d[i].Format(time.DateOnly) }
 	pl := []int{20, 0, 5, 19, 21, 20, 1}
 	lang := map[int]map[string]int{
-		0: {"en": 15, "da": 5, "other": 0}, 4: {"en": 17, "da": 4, "other": 0}, 5: {"en": 19, "da": 0, "other": 1},
+		0: {"en": 15, "da": 5, "de": 0, "other": 0}, 4: {"en": 8, "da": 4, "de": 9, "other": 0}, 5: {"en": 16, "da": 0, "de": 0, "other": 4},
 	}
 	country := map[int]map[string]int{
 		0: {"DE": 10, "DK": 5, "other": 5}, 4: {"DE": 9, "FR": 8, "other": 4}, 5: {"DK": 17, "other": 3},
@@ -619,7 +624,8 @@ func testExport(t *testing.T) {
 	}
 	check(t, reflect.DeepEqual(doc.Source.Collect, []string{"country"}) && doc.Source.DataRetentionDays == 31,
 		"source records collect=[country], retention 31: %+v", doc.Source)
-	check(t, !regexp.MustCompile(`"(SE|NO|US)"`).Match(data), "countries under 5 on a day are not named (SE 4, NO 4, US 2)")
+	check(t, !regexp.MustCompile(`"(SE|NO|US)"`).Match(data), "countries under 5 on a day are not named (SE 4, NO 4, US 3)")
+	check(t, !regexp.MustCompile(`"(fr|it)"`).Match(data), "codes without their own column are not named (fr, it)")
 	settings, err := os.ReadFile(filepath.Join(out, "data/how-the-internet-works/goatcounter-settings.json"))
 	check(t, err == nil && strings.Contains(string(settings), `"public": "private"`) &&
 		strings.Contains(string(settings), `"collect": [`+"\n      \"country\"\n    ]"), "settings snapshot:\n%s", settings)

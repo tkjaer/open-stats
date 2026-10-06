@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func fakeLocations(t *testing.T, n int, broken string) *API {
 func TestWeekPagesThroughCountries(t *testing.T) {
 	days, _ := isoweek.Days("2026-W40")
 	for _, n := range []int{0, 1, 99, 100, 101, 250} {
-		raw, err := fakeLocations(t, n, "").Week("x.localhost", days)
+		raw, err := fakeLocations(t, n, "").Week("x.localhost", []string{"en"}, days)
 		if err != nil {
 			t.Fatalf("%d countries: %v", n, err)
 		}
@@ -79,10 +80,47 @@ func TestWeekPagesThroughCountries(t *testing.T) {
 	}
 }
 
+// Week asks GoatCounter only for the languages' paths, and refuses an answer
+// with any other path, so another code's own count can never be published.
+func TestWeekReadsOnlyLanguages(t *testing.T) {
+	days, _ := isoweek.Days("2026-W40")
+	for _, tt := range []struct {
+		hits string
+		ok   bool
+	}{
+		{`[{"path":"/en","stats":[{"day":"2026-09-28","daily":3}]},{"path":"/de","stats":[{"day":"2026-09-28","daily":2}]}]`, true},
+		{`[]`, true},
+		{`[{"path":"/en","stats":[]},{"path":"/fr","stats":[{"day":"2026-09-28","daily":1}]}]`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			switch r.URL.Path {
+			case "/api/v0/stats/hits":
+				if q.Get("path_by_name") != "true" || q.Get("include_paths") != "/en,/de" {
+					t.Errorf("hits asked for %v", q)
+				}
+				fmt.Fprintf(w, `{"hits":%s,"more":false}`, tt.hits)
+			default:
+				fmt.Fprint(w, `{"stats":[]}`)
+			}
+		}))
+		a := NewAPI(srv.URL, "token")
+		a.Pause = 0
+		raw, err := a.Week("x.localhost", []string{"en", "de"}, days)
+		srv.Close()
+		if (err == nil) != tt.ok {
+			t.Errorf("%s: err %v", tt.hits, err)
+		}
+		if tt.ok && raw.Paths["2026-09-28"]["/de"] != strings.Count(tt.hits, `"daily":2`)*2 {
+			t.Errorf("%s: paths %v", tt.hits, raw.Paths)
+		}
+	}
+}
+
 func TestWeekRefusesBrokenPaging(t *testing.T) {
 	days, _ := isoweek.Days("2026-W40")
 	for _, broken := range []string{"repeat", "endless"} {
-		if _, err := fakeLocations(t, 150, broken).Week("x.localhost", days); err == nil {
+		if _, err := fakeLocations(t, 150, broken).Week("x.localhost", []string{"en"}, days); err == nil {
 			t.Errorf("%s: no error", broken)
 		}
 	}
