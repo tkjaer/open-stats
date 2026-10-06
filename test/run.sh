@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-compose=(docker compose -f test/docker-compose.yml)
+compose=(docker compose -f test/docker-compose.yml --profile systemd)
 cleanup() {
     if [[ ${KEEP:-} != 1 ]]; then "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; fi
 }
@@ -40,3 +40,6 @@ echo "== end-to-end checks in the container"
 "${compose[@]}" build --quiet
 "${compose[@]}" up -d --wait
 "${compose[@]}" exec -T vps "/repo/test/.bin/e2e-linux-$arch" -test.v -test.timeout 15m
+
+echo "== the systemd units, under systemd"
+"${compose[@]}" exec -T systemd "/repo/test/.bin/e2e-linux-$arch" -test.v -test.timeout 10m -test.run TestSystemd

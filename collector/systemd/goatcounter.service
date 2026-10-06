@@ -10,7 +10,9 @@ Type=simple
 User=goatcounter
 Group=goatcounter
 # -json keeps IP addresses out of its log; -ratelimit lifts its own limit of 4
-# counts a second per IP address (see collector/README.md).
+# counts a second per IP address (see collector/README.md). The
+# goatcounter-restart.timer restarts it every hour, which clears the IP
+# addresses its rate limiter keeps in memory.
 ExecStart=/usr/local/bin/goatcounter serve \
     -db sqlite+/var/lib/goatcounter/db.sqlite3 \
     -listen 127.0.0.1:8081 \
@@ -30,6 +32,8 @@ ReadWritePaths=/var/lib/goatcounter
 UMask=0077
 
 # Resources: stay out of the way of nginx and the server's other services.
+# GOMEMLIMIT makes Go collect garbage harder before MemoryHigh is reached.
+Environment=GOMEMLIMIT=100MiB
 CPUWeight=20
 IOWeight=20
 MemoryHigh=120M

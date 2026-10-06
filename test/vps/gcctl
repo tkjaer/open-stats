@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start or stop GoatCounter inside the test container, with the exact
-# command line from collector/systemd/goatcounter.service. For a control run,
-# GCCTL_DROP_FLAG removes one flag from it and GCCTL_LOG sets another log file.
+# command line and environment from collector/systemd/goatcounter.service.
+# For a control run, GCCTL_DROP_FLAG removes one flag from it and GCCTL_LOG
+# sets another log file.
 set -euo pipefail
 pidfile=/run/goatcounter.pid
 
@@ -12,6 +13,8 @@ start)
     # Join the ExecStart= line with its backslash continuations.
     cmd=$(sed -n '/^ExecStart=/,/[^\\]$/p' /opt/open-stats/collector/systemd/goatcounter.service \
         | sed 's/^ExecStart=//; s/\\$//' | tr '\n' ' ')
+    # And its Environment= lines (simple NAME=value ones only).
+    envs=$(sed -n 's/^Environment=//p' /opt/open-stats/collector/systemd/goatcounter.service | tr '\n' ' ')
     if [[ -n ${GCCTL_DROP_FLAG:-} ]]; then
         cmd=${cmd//" $GCCTL_DROP_FLAG "/ }
     fi
@@ -19,7 +22,7 @@ start)
     cd /var/lib/goatcounter
     # Like systemd: as the goatcounter user, output to a log (the journal).
     setpriv --reuid=goatcounter --regid=goatcounter --init-groups --inh-caps=-all \
-        bash -c "umask 077; exec $cmd" >>"$log" 2>&1 &
+        bash -c "umask 077; exec env $envs $cmd" >>"$log" 2>&1 &
     echo $! >"$pidfile"
     for _ in $(seq 50); do
         if up; then exit 0; fi
