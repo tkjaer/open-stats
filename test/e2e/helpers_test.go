@@ -47,8 +47,7 @@ func check(t *testing.T, ok bool, format string, args ...any) bool {
 
 var ipCounter int
 
-// freshIP is a new benchmarking-range IP per request, so per-IP limits
-// don't interfere between checks.
+// freshIP is a new benchmarking-range IP per request.
 func freshIP() string {
 	ipCounter++
 	return fmt.Sprintf("198.18.%d.%d", ipCounter/250, ipCounter%250+1)

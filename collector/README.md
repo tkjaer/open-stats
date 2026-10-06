@@ -87,7 +87,9 @@ curl -s http://127.0.0.1:8081/status    # {"version":"v2.7.0", ...}
 GoatCounter then listens on `127.0.0.1:8081` only, over plain HTTP, with
 logs going to the journal. Its unit keeps it sandboxed: its own user, nothing
 writable but `/var/lib/goatcounter`, no outbound network, low CPU and I/O
-priority, at most 150 MB of memory.
+priority, at most 150 MB of memory. It runs with `-json` (see
+[Logging](#logging)) and `-ratelimit=count:1000/1` (see
+[GoatCounter's rate limiter](#goatcounters-rate-limiter)).
 
 ## 5. Create the project's site
 
@@ -126,6 +128,61 @@ curl -si 'https://stats.irq.dk/how-the-internet-works/count?lang=en'    # HTTP/2
 All `map`s and zones in the file start with `openstats`, so they don't clash
 with the other sites.
 
+### Rate limit
+
+nginx forwards at most **20 counts a second for all projects together**, after
+a burst of up to 200 (`limit_req`, zone `openstats_global`). The zone is keyed
+by the server name, so it holds no IP addresses. Requests over the cap still
+get their 204 and aren't counted. There is deliberately **no limit per IP
+address**: a class of 30 opening the page together from behind one address
+should count as 30. So the cap protects the server, not the numbers: one
+script can still fake up to 20 counts a second.
+
+What this costs, measured with [`test/load/run.sh`](../test/load/run.sh): the
+test container on one CPU core, one nginx worker, GoatCounter in a cgroup with
+the unit's memory limits, and every count a new TLS connection from a random
+public address.
+
+| Load | nginx CPU: average, busiest second | GoatCounter CPU: average, busiest second | GoatCounter memory (RSS) |
+|---|---|---|---|
+| idle | 0.1% | 0.1% | 57 MB |
+| 20 a second for 150 s | 4.6%, 7.9% | 1.9%, 5.2% | at most 59 MB |
+| then 200 at once | 8.4% in that second | 1.9% in the busiest second | at most 53 MB |
+| 60 a second for 30 s (3 times the cap) | 11.6%, 15.1% | 2.4%, 5.6% | at most 53 MB |
+
+Every request got an empty 204 (the burst within 96 ms), nginx let 4,000 of
+4,980 through, and GoatCounter counted exactly 4,000. The percentages are of
+one core of the test machine (Apple silicon), which is probably faster than a
+VPS core; expect up to about twice as much there. Most of nginx's share is the
+TLS handshake, which every request costs whether it's over the cap or not.
+
+### GoatCounter's rate limiter
+
+GoatCounter has its own limit on `/count`, by default 4 a second per client IP
+address and User-Agent
+([handlers/backend.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/backend.go#L95-L109),
+[handlers/mw.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/mw.go#L404-L415),
+[handlers/handlers.go](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/handlers.go#L37-L45)).
+nginx sends one fixed User-Agent, so that would count only 4 a second from
+one address, fewer than nginx lets through. The unit raises it with
+**`-ratelimit=count:1000/1`**, far above anything nginx forwards, so it never
+applies. The tests check that 12 counts from one address within a second are
+all counted (and, as a control, that fewer are without the flag).
+
+The limiter can't be switched off, and it keys on the visitor's address:
+GoatCounter replaces the connection's address with `X-Real-IP` before the
+limiter runs
+([`mware.RealIP()`](https://github.com/arp242/goatcounter/blob/v2.7.0/handlers/backend.go#L52)).
+Its store, [go-limiter](https://github.com/sethvargo/go-limiter) v1.1.0's
+`memorystore` with its default settings, keeps one entry per address **in
+memory only**: the key (the address and nginx's User-Agent), when the address
+was first seen, the one-second window of its last count and how many counts
+that window had left. Nothing about the page or language. A sweep every 6
+hours removes entries unused for 12 hours
+([memorystore/store.go](https://github.com/sethvargo/go-limiter/blob/v1.1.0/memorystore/store.go#L85-L92)),
+so an address stays until 12 to 18 hours after its last count. It is never
+written to disk or logged, and restarting GoatCounter clears it.
+
 ### Logging
 
 The `stats.irq.dk` server has `access_log off` **and**
@@ -154,7 +211,7 @@ The tests run with another site as the default server and the error log at
 GoatCounter logs to the journal (`journalctl -u goatcounter`). Its only peer
 is nginx on `127.0.0.1`; the visitor's address reaches it in the `X-Real-IP`
 header and is kept with each count until the count is processed (every 10
-seconds). Its HTTP error messages name the method, URL, site and User-Agent
+seconds), and as a key in its rate limiter (see above). Its HTTP error messages name the method, URL, site and User-Agent
 (nginx's fixed one), never the address. But when processing a count fails
 (a site lookup or database error, or a panic), GoatCounter logs the whole
 count, and in its default text format that **includes the IP address**. The

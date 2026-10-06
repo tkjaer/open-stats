@@ -55,9 +55,10 @@ Germany) in front of a self-hosted
   **Do Not Track** (`DNT: 1`), obvious bots and scripts (by User-Agent), and
   browser prefetches (by their prefetch headers). It uses these headers only to
   decide, and passes none of them on;
-- **rate-limits** what's left: per IP address (10 a minute, bursts of 10) and
-  overall (5 a second, bursts of 50). The IP addresses for this live only in
-  nginx's memory;
+- **caps** what's left at 20 requests a second for all projects together
+  (after a burst of up to 200). There is no limit per IP address, so a class
+  or an office behind one address is counted in full, and nginx keeps no IP
+  addresses for this;
 - passes the rest on to GoatCounter as `/count?p=/<value>`, with the visitor's
   IP address and **nothing else from the browser**: no User-Agent, no
   `Accept-Language`, no cookies, no referrer. It doesn't wait for GoatCounter:
@@ -122,20 +123,29 @@ The format is described in [`docs/data-format.md`](docs/data-format.md).
   manual: the server never pulls code from here by itself.
 - **The numbers are approximate.** Reloads and new tabs count as page loads.
   Visitors with GPC, DNT, a content blocker or "Count my visit" switched off
-  aren't counted. Busy networks behind one IP address (offices, mobile
-  carriers' NAT) can hit the per-IP limit. Countries come from a GeoIP
-  database and are sometimes wrong (VPNs, mobile networks).
-- **Counts can be faked.** Anyone can send requests that look like page loads.
-  The rate limits keep the damage small, but a determined person could inflate
-  the numbers.
-- **Where an IP address could still appear:** nginx keeps IP addresses in
-  memory for the rate limits. GoatCounter gets the visitor's IP address in a
-  header, looks up the country at once, and keeps the address in memory with
+  aren't counted. Above 20 page loads a second for all projects together
+  (after a burst of 200), the excess isn't counted. Countries come from a
+  GeoIP database and are sometimes wrong (VPNs, mobile networks).
+- **Counts can be faked.** Anyone can send requests that look like page loads,
+  and there is no limit per IP address: one script could inflate the numbers,
+  by up to the global cap of 20 a second (about 1.7 million a day), and while
+  it does, real visits over the cap aren't counted.
+- **Where an IP address could still appear:** nginx uses the visitor's IP
+  address only while it handles the request. GoatCounter gets the address in
+  a header, looks up the country at once, and keeps the address in memory with
   the count until it adds the count to its totals (within about 10 seconds).
-  If that fails, GoatCounter logs the count to the system journal; it runs
+  If adding it fails, GoatCounter logs the count to the system journal; it runs
   with a log format that leaves the IP address out (its default format would
   include it). Its bot detection never classifies these requests by IP
   address, so it keeps no per-request bot records. The tests check both.
+  GoatCounter also keeps each address, with nginx's fixed User-Agent, as a key
+  in its rate limiter, **in memory only, until 12 to 18 hours after that
+  address's last count**: a sweep every 6 hours removes keys unused for 12
+  hours. With the key it keeps only when the address was first seen, the
+  second of its last count and how many counts that second had left. The key
+  is never on disk or in a log, a restart clears it, and it isn't linked to
+  the page or language
+  ([details and source](collector/README.md#goatcounters-rate-limiter)).
   The VPS hosts other sites too, and two kinds of connection are handled by its
   default HTTPS site, under that site's logging, because nginx can't yet tell
   they are for `stats.irq.dk`: a TLS connection that fails before it names

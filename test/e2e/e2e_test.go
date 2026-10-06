@@ -228,31 +228,29 @@ func testForwarding(t *testing.T) {
 }
 
 func testRateLimits(t *testing.T) {
-	t.Log("per IP (10/min, burst 10) and global (5/s, burst 50)")
+	t.Log("no per-IP limit; one global cap (20/s, burst 200)")
 	time.Sleep(11 * time.Second) // let the global bucket refill after the tests above
 	cap := startCapture(t, 0)
 	defer cap.stop()
 	all204 := true
-	for range 20 {
+	for range 60 {
 		all204 = send(t, req{ip: "198.51.100.77"}).silent204(500*time.Millisecond) && all204
 	}
 	got := cap.take(400 * time.Millisecond)
-	check(t, all204, "all 20 answered with an empty 204")
-	check(t, len(got) == 11, "20 quick requests from one IP: 11 forwarded (got %d)", len(got))
-	other := send(t, req{ip: "198.51.100.78"})
-	check(t, other.silent204(500*time.Millisecond) && len(cap.take(400*time.Millisecond)) == 1, "another IP still gets through")
+	check(t, all204, "all 60 answered with an empty 204")
+	check(t, len(got) == 60, "60 quick requests from one IP (a class behind one NAT): all forwarded (got %d)", len(got))
 
 	time.Sleep(11 * time.Second)
 	start := time.Now()
 	all204 = true
-	for range 80 {
+	for range 300 {
 		all204 = send(t, req{ip: freshIP()}).silent204(500*time.Millisecond) && all204
 	}
 	took := time.Since(start)
 	got = cap.take(time.Second)
-	most := 51 + int(5*took.Seconds()) + 1 // 50 burst + 1, plus 5 per second while sending
-	check(t, all204, "all 80 answered with an empty 204")
-	check(t, len(got) >= 51 && len(got) <= most, "80 requests from 80 IPs in %.1f s: between 51 and %d forwarded (got %d)",
+	most := 201 + int(20*took.Seconds()) + 1 // 200 burst + 1, plus 20 per second while sending
+	check(t, all204, "all 300 answered with an empty 204")
+	check(t, len(got) >= 201 && len(got) <= most, "300 requests from 300 IPs in %.1f s: between 201 and %d forwarded (got %d)",
 		took.Seconds(), most, len(got))
 }
 
@@ -448,10 +446,36 @@ func testGoatCounterInternals(t *testing.T) {
 	os.Remove(textLog)
 	gcctl(t, "start")
 
-	t.Log("-- requests from cloud and hosting ranges are counted, not recorded as bots")
 	today := time.Now().UTC().Format(time.DateOnly)
 	q := "/api/v0/stats/total?start=" + today + "T00:00:00Z&end=" + today + "T23:59:59Z"
-	before := num(mustAPI(t, "GET", "how-the-internet-works.localhost", q, exportToken, nil)["total"])
+	total := func() int {
+		return num(mustAPI(t, "GET", "how-the-internet-works.localhost", q, exportToken, nil)["total"])
+	}
+
+	t.Log("-- many counts at once from one IP address are all counted (-ratelimit)")
+	// GoatCounter's own default limit is 4 counts a second per IP address and
+	// User-Agent, and nginx sends one fixed User-Agent.
+	const natIP = "80.62.117.13"
+	burst := func() int {
+		before := total()
+		for range 12 {
+			send(t, req{ip: natIP})
+		}
+		gcctl(t, "stop") // stores all counts
+		gcctl(t, "start")
+		return total() - before
+	}
+	n := burst()
+	check(t, n == 12, "12 counts from %s within a second: 12 counted (got %d)", natIP, n)
+	gcctl(t, "stop")
+	if _, err := runE(append(os.Environ(), "GCCTL_DROP_FLAG=-ratelimit=count:1000/1"), "gcctl", "start"); err != nil {
+		t.Fatal(err)
+	}
+	n = burst() // restarts GoatCounter with the unit's flags
+	check(t, n < 12, "control: without the -ratelimit flag, %d of the 12 are counted", n)
+
+	t.Log("-- requests from cloud and hosting ranges are counted, not recorded as bots")
+	before := total()
 	for _, ip := range cloudIPs {
 		send(t, req{ip: ip})
 	}

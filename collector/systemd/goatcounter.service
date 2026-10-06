@@ -9,13 +9,16 @@ After=network.target
 Type=simple
 User=goatcounter
 Group=goatcounter
+# -json keeps IP addresses out of its log; -ratelimit lifts its own limit of 4
+# counts a second per IP address (see collector/README.md).
 ExecStart=/usr/local/bin/goatcounter serve \
     -db sqlite+/var/lib/goatcounter/db.sqlite3 \
     -listen 127.0.0.1:8081 \
     -tls http \
     -automigrate \
     -smtp stdout \
-    -json
+    -json \
+    -ratelimit=count:1000/1
 Restart=on-failure
 RestartSec=5s
 
