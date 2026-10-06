@@ -44,7 +44,33 @@ const (
 	TokenName      = "open-stats export"
 )
 
-var tokenRE = regexp.MustCompile(`^[0-9a-f]{20,64}$`)
+var (
+	// tokenRE is the export token's format: 24 random bytes in hex, as
+	// insertToken makes them.
+	tokenRE = regexp.MustCompile(`^[0-9a-f]{48}$`)
+	// sqlSafeRE is every character sqlString lets into a quoted SQL string.
+	sqlSafeRE = regexp.MustCompile(`^[A-Za-z0-9 ._:()\[\],-]*$`)
+)
+
+// sqlString quotes s as an SQL string literal. `goatcounter db query` takes
+// no parameters, so every string pasted into SQL goes through here; anything
+// with a character that could end the literal (or isn't expected at all) is
+// refused, not escaped.
+func sqlString(s string) (string, error) {
+	if !sqlSafeRE.MatchString(s) {
+		return "", fmt.Errorf("refusing to put %q into SQL", s)
+	}
+	return "'" + s + "'", nil
+}
+
+// checkToken refuses a token that isn't in the export token's format.
+func checkToken(token, where string) error {
+	if !tokenRE.MatchString(token) {
+		return fmt.Errorf("GOATCOUNTER_TOKEN in %s is not 48 lowercase hex digits; "+
+			"remove the line and run open-stats configure again to create a new token", where)
+	}
+	return nil
+}
 
 type Options struct {
 	CLI        *goatcounter.CLI
@@ -65,7 +91,11 @@ func (s *setup) logf(format string, args ...any) { fmt.Fprintf(s.Log, format+"\n
 
 // siteID returns the site's id and its root (itself or its parent), or 0.
 func (s *setup) siteID(vhost string) (int, int, error) {
-	rows, err := s.CLI.Query("select site_id, parent from sites where cname = '" + vhost + "' and state = 'a'")
+	cname, err := sqlString(vhost)
+	if err != nil {
+		return 0, 0, err
+	}
+	rows, err := s.CLI.Query("select site_id, parent from sites where cname = " + cname + " and state = 'a'")
 	if err != nil || len(rows) == 0 {
 		return 0, 0, err
 	}
@@ -143,9 +173,15 @@ func (s *setup) adminUser(root int) (int, error) {
 	return user, nil
 }
 
-func sitesJSON(ids []int) string {
-	b, _ := json.Marshal(ids)
-	return string(b)
+// sitesList is GoatCounter's api_tokens.sites value, a JSON list of site
+// IDs, as an SQL string literal. It is built from the ints directly, so it
+// can only hold digits, commas and brackets.
+func sitesList(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.Itoa(id)
+	}
+	return "'[" + strings.Join(parts, ",") + "]'"
 }
 
 func (s *setup) insertToken(root, user int, name string, perms int, sites []int) (string, error) {
@@ -154,10 +190,27 @@ func (s *setup) insertToken(root, user int, name string, perms int, sites []int)
 		return "", err
 	}
 	token := hex.EncodeToString(b)
-	err := s.CLI.Exec(fmt.Sprintf("insert into api_tokens (site_id, user_id, name, token, permissions, created_at, sites) "+
-		"values (%d, %d, '%s', '%s', '%d', strftime('%%Y-%%m-%%d %%H:%%M:%%S', 'now'), '%s')",
-		root, user, name, token, perms, sitesJSON(sites)))
+	qToken, err := sqlString(token)
+	if err != nil {
+		return "", err
+	}
+	qName, err := sqlString(name)
+	if err != nil {
+		return "", err
+	}
+	err = s.CLI.Exec(fmt.Sprintf("insert into api_tokens (site_id, user_id, name, token, permissions, created_at, sites) "+
+		"values (%d, %d, %s, %s, '%d', strftime('%%Y-%%m-%%d %%H:%%M:%%S', 'now'), %s)",
+		root, user, qName, qToken, perms, sitesList(sites)))
 	return token, err
+}
+
+// deleteToken removes a token made by insertToken.
+func (s *setup) deleteToken(token string) error {
+	q, err := sqlString(token)
+	if err != nil {
+		return err
+	}
+	return s.CLI.Exec("delete from api_tokens where token = " + q)
 }
 
 func (s *setup) applySettings(p *project.Project, siteID, root, user int) (err error) {
@@ -166,7 +219,7 @@ func (s *setup) applySettings(p *project.Project, siteID, root, user int) (err e
 		return err
 	}
 	defer func() {
-		if derr := s.CLI.Exec("delete from api_tokens where token = '" + tmp + "'"); err == nil {
+		if derr := s.deleteToken(tmp); err == nil {
 			err = derr
 		}
 	}()
@@ -233,8 +286,10 @@ func readEnv(path string) ([]string, string, error) {
 		}
 		lines = append(lines, ln)
 	}
-	if token != "" && !tokenRE.MatchString(token) {
-		return nil, "", fmt.Errorf("unexpected GOATCOUNTER_TOKEN format in %s", path)
+	if token != "" {
+		if err := checkToken(token, path); err != nil {
+			return nil, "", err
+		}
 	}
 	return lines, token, nil
 }
@@ -279,13 +334,21 @@ func (s *setup) ensureExportToken(root, user int) error {
 		return err
 	}
 	if token != "" {
-		rows, err := s.CLI.Query("select api_token_id from api_tokens where token = '" + token + "'")
+		qToken, err := sqlString(token)
+		if err != nil {
+			return err
+		}
+		qName, err := sqlString(TokenName)
+		if err != nil {
+			return err
+		}
+		rows, err := s.CLI.Query("select api_token_id from api_tokens where token = " + qToken)
 		if err != nil {
 			return err
 		}
 		if len(rows) > 0 {
-			err := s.CLI.Exec(fmt.Sprintf("update api_tokens set permissions = '%d', sites = '%s', name = '%s' "+
-				"where token = '%s'", ExportPerms, sitesJSON(all), TokenName, token))
+			err := s.CLI.Exec(fmt.Sprintf("update api_tokens set permissions = '%d', sites = %s, name = %s "+
+				"where token = %s", ExportPerms, sitesList(all), qName, qToken))
 			if err == nil {
 				s.logf("export token in %s covers sites %v", s.EnvFile, all)
 			}
@@ -313,6 +376,10 @@ func Run(p *project.Project, o Options) error {
 	}
 	if o.Log == nil {
 		o.Log = os.Stdout
+	}
+	// Check the env file before touching GoatCounter's database at all.
+	if _, _, err := readEnv(o.EnvFile); err != nil {
+		return err
 	}
 	s := &setup{Options: o}
 	siteID, root, err := s.ensureSite(p.GoatCounter.VHost)
